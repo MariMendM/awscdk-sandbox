@@ -37,7 +37,7 @@ new Cdk001Stack(app, 'Cdk001Stack',
 		
 		env: { region: 'us-east-1' },
 		EnvironmentName: jsonConfig['environment_name'],
-		CIDR_VPC: jsonConfig['cidr_vpc'],
+		CidrVPC: jsonConfig['cidr_vpc'],
 		SubnetConfigs: jsonConfig['subnets'],
 	}
 );

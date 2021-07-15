@@ -3,12 +3,14 @@
 This project creates following architecture:
 * 1 VPC
 * 1 Internet Gateway
-* As many public Subnetsas described in 'subnets' array of cdk.json configuration
+* As many public Subnets as described in 'subnets' array of cdk.json configuration
 * 1 Route Table for public traffic, with route to Internet Gateway and associated to public subnets
+* 1 NACL for public subnets
 * As many private Subnets as described in 'subnets' array of cdk.json configuration
 * 1 NAT Gateways (and respective EIP) for each private subnet
 * 1 Route Table for each private subnet, with route to respective NAT Gateway and associated to respective private subnet
-
+* 1 NACL for private subnets
+* 
 The `cdk.json` file includes parametrization to deploy CDK:
 ```json
 	"ENVCONFIGS": {

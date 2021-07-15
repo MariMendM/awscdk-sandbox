@@ -59,6 +59,64 @@ export class Cdk001Stack extends cdk.Stack
 		resRouteTablePublicRoute1.addDependsOn(resIGw);
 
 		//##################################################################################
+		//Creating Network ACLs...
+		const resNACLPublic = new ec2.CfnNetworkAcl(this, 'NACLPub', {vpcId: resVPC.ref});
+		resNACLPublic.addDependsOn(resVPC);
+		new ec2.CfnNetworkAclEntry(this, 'NACLPubInboundHTTP',
+			{	networkAclId: resNACLPublic.ref,
+				egress: false,
+				ruleNumber: 100,
+				ruleAction: 'allow',
+				protocol: 6, //IANA code or -1 for 'All' (6=TCP)
+				cidrBlock: '0.0.0.0/0',
+				portRange: {from: 80, to: 80},
+			}
+		);
+		new ec2.CfnNetworkAclEntry(this, 'NACLPubInboundHTTPS',
+			{	networkAclId: resNACLPublic.ref,
+				egress: false,
+				ruleNumber: 110,
+				ruleAction: 'allow',
+				protocol: 6, //IANA code or -1 for 'All' (6=TCP)
+				cidrBlock: '0.0.0.0/0',
+				portRange: {from: 443, to: 443},
+			}
+		);
+		new ec2.CfnNetworkAclEntry(this, 'NACLPubInboundEphemeral',
+			{	networkAclId: resNACLPublic.ref,
+				egress: false,
+				ruleNumber: 120,
+				ruleAction: 'allow',
+				protocol: 6, //IANA code or -1 for 'All' (6=TCP)
+				cidrBlock: '0.0.0.0/0',
+				portRange: {from: 1024, to: 65535},
+			}
+		);
+		new ec2.CfnNetworkAclEntry(this, 'NACLPubInboundSSH',
+			{	networkAclId: resNACLPublic.ref,
+				egress: false,
+				ruleNumber: 130,
+				ruleAction: 'allow',
+				protocol: 6, //IANA code or -1 for 'All' (6=TCP)
+				cidrBlock: '0.0.0.0/0',
+				portRange: {from: 22, to: 22},
+			}
+		);
+		//TODO: continuar...
+
+		const resNACLPrivate = new ec2.CfnNetworkAcl(this, 'NACLPvt', {vpcId: resVPC.ref});
+		resNACLPrivate.addDependsOn(resVPC);
+		new ec2.CfnNetworkAclEntry(this, 'NACLPvtInboundAllInternalTraffic',
+			{	networkAclId: resNACLPrivate.ref,
+				egress: false,
+				ruleNumber: 100,
+				ruleAction: 'allow',
+				protocol: -1, //IANA code or -1 for 'All'
+				cidrBlock: props.CidrVPC,
+			}
+		);
+
+		//##################################################################################
 		//Creating subnets according to cdk.json configuration specification
 		let subnetCounter:number = 1;
 		for (let subnetSpec of props.SubnetConfigs)
@@ -85,8 +143,14 @@ export class Cdk001Stack extends cdk.Stack
 			{
 				//Create association of public subnet to RouteTablePub
 				new ec2.CfnSubnetRouteTableAssociation(this, 'Subnet'+subnetCounter+'RouteTableAssoc',
-					{
-						routeTableId: resRouteTablePublic.ref,
+					{	routeTableId: resRouteTablePublic.ref,
+						subnetId: resSubnet.ref,
+					}
+				);
+
+				//Create association of public subnet to NACLPublic
+				new ec2.CfnSubnetNetworkAclAssociation(this, 'Subnet'+subnetCounter+'NACLPubAssoc',
+					{	networkAclId: resNACLPublic.ref,
 						subnetId: resSubnet.ref,
 					}
 				);
@@ -121,16 +185,23 @@ export class Cdk001Stack extends cdk.Stack
 				
 				//Create association of private subnet to RouteTablePvt
 				new ec2.CfnSubnetRouteTableAssociation(this, 'Subnet'+subnetCounter+'RouteTableAssoc',
-					{
-						routeTableId: resRouteTablePrivate.ref,
+					{	routeTableId: resRouteTablePrivate.ref,
+						subnetId: resSubnet.ref,
+					}
+				);
+				
+				//Create association of private subnet to NACLPrivate
+				new ec2.CfnSubnetNetworkAclAssociation(this, 'Subnet'+subnetCounter+'NACLPvtAssoc',
+					{	networkAclId: resNACLPrivate.ref,
 						subnetId: resSubnet.ref,
 					}
 				);
 			}
 			*/
-			
+
 			subnetCounter++;
 		}
+
 	}
 
 }

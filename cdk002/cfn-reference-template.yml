@@ -1,0 +1,246 @@
+#----------------------------------------------------------------------
+Description:
+  Contains
+  - 2 IAM policies (read only to S3, full access to S3)
+  - 2 IAM groups (one to each policy)
+  - 1 S3 bucket (private, version enabled or not according choice)
+  - x IAM users
+  By default VPC deploys 1 NACL and 1 SecGroup not reachable for changes by CloudFormation
+
+#----------------------------------------------------------------------
+#Metadata to define presentation of input parameters (AWS console interface)
+#----------------------------------------------------------------------
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General Configuration
+        Parameters:
+          - EnvironmentName
+          - EnableS3Versioning
+          - UserNames
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment Name
+      EnableS3Versioning:
+        default: Option for bucket versioning
+      UserNames:
+        default: List of IAM users
+
+
+#----------------------------------------------------------------------
+#Input parameters for user to fulfill
+#----------------------------------------------------------------------
+Parameters:
+
+  EnvironmentName:
+    Description: Enter a name to be prefixed to resource names and tags (no spaces, max size 15, lowercase)
+    Type: String
+    Default: studiogreat
+    AllowedPattern: ^((?:[0-9a-z-])+) #^\S+$
+    MaxLength: 15
+    ConstraintDescription: lowercase alphanumeric and hyphens, not empty, no spaces, max 15 chars
+
+  EnableS3Versioning:
+    Description: Select TRUE for enabled, FALSE otherwise
+    Type: String
+    AllowedValues:
+      - True
+      - False
+    Default: False
+    ConstraintDescription: must specify one of the options
+
+  UserNames:
+    Description: Enter a comma-delimited list of 3 users
+    Type: CommaDelimitedList
+    Default: usr1, usr2, usr3
+    ConstraintDescription: lowercase alphanumeric and hyphens, not empty, no spaces
+
+
+#----------------------------------------------------------------------
+#Conditions for resource configuration
+#----------------------------------------------------------------------
+Conditions:
+
+  IsS3VersionEnabled: !Equals [ !Ref EnableS3Versioning, True ] #Used to decide whether S3 bucket is created or not with versioning
+
+#----------------------------------------------------------------------
+#Resources definition
+#----------------------------------------------------------------------
+Resources:
+
+  # S3 ##############################################################################
+  S3bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: !Sub ${EnvironmentName}-bucket-docs #Comment for auto-generated name
+      # BucketEncryption: 
+        # BucketEncryption
+      VersioningConfiguration: 
+        Status: !If [ IsS3VersionEnabled, Enabled, Suspended ]
+      # LifecycleConfiguration:
+        # Rules:
+          # - Rule1
+          # - RuleN
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}
+  ###################################################################################
+
+  # Policies for group management ###################################################
+  IAMPolicyS3bucketReadOnly: #ReadOnly in S3bucket
+    Type: AWS::IAM::ManagedPolicy
+    DependsOn: S3bucket
+    Properties:
+      ManagedPolicyName: !Sub PolicyS3.${S3bucket}.ReadOnly
+      Description: !Sub Read Only access to bucket ${S3bucket}
+      Path: !Sub /${EnvironmentName}/policies/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Resource:
+              - !Sub arn:aws:s3:::${S3bucket}
+              - !Sub arn:aws:s3:::${S3bucket}/*
+            Action:
+              - "s3:List*"
+              - "s3:Get*"
+
+  IAMPolicyS3bucketFullAccess: #FullAccess in S3bucket
+    Type: AWS::IAM::ManagedPolicy
+    DependsOn:
+      - S3bucket
+    Properties:
+      ManagedPolicyName: !Sub PolicyS3.${S3bucket}.FullAccess
+      Description: !Sub Full Access to bucket ${S3bucket}
+      Path: !Sub /${EnvironmentName}/policies/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Resource:
+              - !Sub arn:aws:s3:::${S3bucket}
+              - !Sub arn:aws:s3:::${S3bucket}/*
+            Action:
+              - "s3:*"
+
+  IAMPolicyS3FTP: # ListAllMyBuckets access in S3 service for FTP
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub PolicyS3.ListAllBuckets
+      Description: !Sub ListAllMyBuckets for FTP listing protocols
+      Path: !Sub /${EnvironmentName}/policies/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Resource:
+              - "*"
+            Action:
+              - "s3:ListAllMyBuckets"
+
+  ###################################################################################
+
+  # IAM Groups using policies #######################################################
+  IAMGroupS3ReadOnly:
+    Type: AWS::IAM::Group
+    DependsOn:
+      - IAMPolicyS3bucketReadOnly
+      - IAMPolicyS3FTP
+    Properties: 
+      GroupName: !Sub ${S3bucket}.ReadOnly #!Join ["", [!Ref AWS::Region, !Ref S3bucket, -ReadOnly]]
+      Path: !Sub /${EnvironmentName}/groups/
+      ManagedPolicyArns:
+        - !Ref IAMPolicyS3bucketReadOnly
+        - !Ref IAMPolicyS3FTP
+
+  IAMGroupS3FullAccess:
+    Type: AWS::IAM::Group
+    DependsOn:
+      - IAMPolicyS3bucketFullAccess
+      - IAMPolicyS3FTP
+    Properties: 
+      GroupName: !Sub ${S3bucket}.FullAccess #!Join ["", [!Ref AWS::Region, !Ref S3bucket, -FullAccess ]]
+      Path: !Sub /${EnvironmentName}/groups/
+      ManagedPolicyArns:
+        - !Ref IAMPolicyS3bucketFullAccess
+        - !Ref IAMPolicyS3FTP
+  ###################################################################################
+
+  # IAM Users attached to groups ####################################################
+  User1:
+    Type: AWS::IAM::User
+    DependsOn: IAMGroupS3FullAccess
+    Properties:
+      UserName: !Select [0, !Ref UserNames] #!Join ["", [!Ref AWS::Region, fa_usr1]]
+      Path: !Sub /${EnvironmentName}/users/
+      Groups:
+        - !Ref IAMGroupS3FullAccess
+      LoginProfile: # console credentials
+        Password: ${EnvironmentName}-Temp123
+        PasswordResetRequired: True
+
+  User1AccessKey: # programmatic credentials
+    Type: AWS::IAM::AccessKey
+    DependsOn: User1
+    Properties:
+      UserName: !Select [0, !Ref UserNames] #!Join ["", [!Ref AWS::Region, fa_usr1]]
+      Status: Active
+  #--------------
+  User2:
+    Type: AWS::IAM::User
+    DependsOn: IAMGroupS3ReadOnly
+    Properties:
+      UserName: !Select [1, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr2]]
+      Path: !Sub /${EnvironmentName}/users/
+      Groups:
+        - !Ref IAMGroupS3ReadOnly
+      LoginProfile: # console credentials
+        Password: ${EnvironmentName}-Temp123
+        PasswordResetRequired: True
+
+  User2AccessKey: # programmatic credentials
+    Type: AWS::IAM::AccessKey
+    DependsOn: User2
+    Properties:
+      UserName: !Select [1, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr2]]
+      Status: Active
+  #--------------
+  User3:
+    Type: AWS::IAM::User
+    DependsOn: IAMGroupS3ReadOnly
+    Properties:
+      UserName: !Select [2, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr3]]
+      Path: !Sub /${EnvironmentName}/users/
+      Groups:
+        - !Ref IAMGroupS3ReadOnly
+      LoginProfile: # console credentials
+        Password: ${EnvironmentName}-Temp123
+        PasswordResetRequired: True
+
+  User3AccessKey: # programmatic credentials
+    Type: AWS::IAM::AccessKey
+    DependsOn: User3
+    Properties:
+      UserName: !Select [2, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr3]]
+      Status: Active
+  ###################################################################################
+
+#----------------------------------------------------------------------
+#Output information for user after stack creation
+#----------------------------------------------------------------------
+Outputs:
+
+  S3DNS:
+    Description: DNS of S3
+    Value: !GetAtt S3bucket.DomainName
+
+  IAMUsersSecretsReadOnly:
+    Description: List of users with AccessKeyId and SecretAccessKey
+    Value: !Sub |
+      User;AccessKeyId;SecretAccessKey |
+      ${User1};${User1AccessKey};${User1AccessKey.SecretAccessKey} |
+      ${User2};${User2AccessKey};${User2AccessKey.SecretAccessKey} |
+      ${User3};${User3AccessKey};${User3AccessKey.SecretAccessKey}

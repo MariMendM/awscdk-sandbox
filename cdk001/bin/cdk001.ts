@@ -17,7 +17,7 @@ if ( !regexpEnvName.test(jsonConfig['environment_name']) )
 //-------------------------------------------------------------------------------------------------
 //Tagging all resources from app
 //-------------------------------------------------------------------------------------------------
-cdk.Tags.of(app).add('Name', jsonConfig['environment_name']);
+cdk.Tags.of(app).add('Proj', jsonConfig['environment_name']);
 
 
 //-------------------------------------------------------------------------------------------------
@@ -38,6 +38,6 @@ new Cdk001Stack(app, 'Cdk001Stack',
 		env: { region: 'us-east-1' },
 		EnvironmentName: jsonConfig['environment_name'],
 		CidrVPC: jsonConfig['cidr_vpc'],
-		SubnetConfigs: jsonConfig['subnets'],
+		SubnetsConfig: jsonConfig['subnet_pairs'],
 	}
 );

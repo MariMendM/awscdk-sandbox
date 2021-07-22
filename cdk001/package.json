@@ -11,8 +11,8 @@
     "cdk": "cdk"
   },
   "devDependencies": {
-    "aws-cdk": "1.111.0",
-    "@aws-cdk/assert": "1.111.0",
+    "aws-cdk": "1.115.0",
+    "@aws-cdk/assert": "1.115.0",
     "@types/jest": "^26.0.10",
     "@types/node": "10.17.27",
     "jest": "^26.4.2",
@@ -21,8 +21,7 @@
     "typescript": "~3.9.7"
   },
   "dependencies": {
-    "@aws-cdk/aws-ec2": "^1.113.0",
-    "@aws-cdk/aws-lambda": "^1.113.0",
-    "@aws-cdk/core": "^1.113.0"
+    "@aws-cdk/aws-ec2": "^1.115.0",
+    "@aws-cdk/core": "^1.115.0"
   }
 }

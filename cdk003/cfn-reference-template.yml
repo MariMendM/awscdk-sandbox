@@ -1,0 +1,275 @@
+#----------------------------------------------------------------------
+#Metadata to define presentation of input parameters (AWS console interface)
+#----------------------------------------------------------------------
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "General Configuration"
+        Parameters:
+          - EnvironmentName
+      - Label:
+          default: "Source Code Configuration"
+        Parameters:
+          - SourceCodeS3Key
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment Name
+      SourceCodeS3Key:
+        default: Filename of zipped code to be uploaded to S3
+
+#----------------------------------------------------------------------
+#Input parameters (information from user)
+#----------------------------------------------------------------------
+Parameters:
+
+  EnvironmentName:
+    Description: Enter an environment name to be prefixed to tag 'Name' of resources (no spaces, max size 15, lowercase)
+    Type: String
+    Default: cdk003
+    AllowedPattern: ^((?:[0-9a-z-])+) #^\S+$
+    MaxLength: 15
+    ConstraintDescription: lowercase alphanumeric and hyphens, not empty, no spaces, max 15 chars
+
+  SourceCodeS3Key:
+    Description:  Type the name of the zip file containing the code to be uploaded to S3
+    Type: String
+    Default: code.zip
+    AllowedPattern: ^\S+$
+    ConstraintDescription: cannot have spaces neither be empty
+
+#----------------------------------------------------------------------
+#Resources definition
+#----------------------------------------------------------------------
+Resources:
+
+  # ECR/ECS ##########################################################################
+
+  # ECR private repo ----------------------------------------------------------------
+  ECR:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EnvironmentName}/restapi #Comment for auto-generated name
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecr
+
+  # CI/CD Pipeline ##################################################################
+
+  # Artifact storage and roles ------------------------------------------------------
+  S3Bucket4PipelineArtifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      # BucketName: !Sub ${EnvironmentName}-bucket-artifacts #Comment for auto-generated name
+      VersioningConfiguration:
+        Status: Enabled #must be enabled
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-bucket-artifacts
+  RoleIAM4CodePipeline:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - S3Bucket4PipelineArtifacts
+      - CodeBuildAppAndContainer
+    Properties:
+      Description: !Sub CodePipeline role for ${EnvironmentName} build and deploy of container with rest api
+      RoleName: !Sub ${EnvironmentName}-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: !Sub ${EnvironmentName}-codepipeline-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:aws:s3:::${S3Bucket4PipelineArtifacts}
+                  - !Sub arn:aws:s3:::${S3Bucket4PipelineArtifacts}/*
+                Action:
+                  - "s3:DeleteObject"
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:GetObjectTagging"
+                  - "s3:GetObjectVersionTagging"
+                  - "s3:ListBucket"
+                  - "s3:PutObject"
+                  - "s3:PutObjectAcl"
+                  - "s3:PutObjectTagging"
+                  - "s3:GetBucketPolicy"
+                  - "s3:GetBucketVersioning"
+                  - "s3:GetBucketAcl"
+                  - "s3:GetBucketLocation"
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${CodeBuildAppAndContainer}
+                  - !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:build/${CodeBuildAppAndContainer}:*
+                Action:
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-codepipeline-role
+
+  RoleIAM4CodeBuild:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - S3Bucket4PipelineArtifacts
+      - ECR
+    Properties:
+      Description: !Sub CodeBuild role for ${EnvironmentName} api and container deploys
+      RoleName: !Sub ${EnvironmentName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /service-role/
+      Policies:
+        - PolicyName: !Sub ${EnvironmentName}-codebuild-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-bcknd-cbld
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-bcknd-cbld:*
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:aws:s3:::codepipeline-${AWS::Region}-*
+                  - !Sub arn:aws:s3:::${S3Bucket4PipelineArtifacts}
+                  - !Sub arn:aws:s3:::${S3Bucket4PipelineArtifacts}/*
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:GetBucketAcl"
+                  - "s3:GetBucketLocation"
+              - Effect: Allow
+                Resource:
+                  - "*"
+                Action:
+                  - "ecr:GetAuthorizationToken"
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ECR}
+                Action:
+                  - "imagebuilder:GetComponent"
+                  - "imagebuilder:GetContainerRecipe"
+                  - "ecr:BatchGetImage"
+                  - "ecr:InitiateLayerUpload"
+                  - "ecr:UploadLayerPart"
+                  - "ecr:CompleteLayerUpload"
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:PutImage"
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-codebuild-role
+
+  # CodePipeline for app/container --------------------------------------------------
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn:
+      - RoleIAM4CodePipeline
+      - S3Bucket4PipelineArtifacts
+      - CodeBuildAppAndContainer
+    Properties:
+      Name: !Sub ${EnvironmentName}-bcknd-pipeline
+      RoleArn: !GetAtt RoleIAM4CodePipeline.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-bcknd-pipeline
+      ArtifactStore: 
+        Type: S3
+        Location: !Ref S3Bucket4PipelineArtifacts
+      RestartExecutionOnUpdate: true
+      Stages:
+        - Name: SourceStage
+          Actions:
+            - Name: BackendSourceS3
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: 1
+              Configuration:
+                S3Bucket: !Ref S3Bucket4PipelineArtifacts
+                S3ObjectKey: !Sub ${SourceCodeS3Key}
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: BackendSourceS3Artifacts
+        - Name: BuildStage
+          Actions:
+            - Name: BackendBuild
+              InputArtifacts: 
+                - Name: BackendSourceS3Artifacts 
+              ActionTypeId: 
+                Category: Build 
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuildAppAndContainer
+              OutputArtifacts: 
+                - Name: BackendCodeBuildArtifacts
+
+  # CodeBuild for app/container -----------------------------------------------------
+  CodeBuildAppAndContainer:
+    Type: AWS::CodeBuild::Project
+    DependsOn:
+      - RoleIAM4CodeBuild
+    Properties: 
+      Description: !Sub Build of rest api and docker image for ${EnvironmentName}
+      Name: !Sub ${EnvironmentName}-bcknd-cbld #Always exactly same name configured inside RoleIAM4CodeBuild
+      ServiceRole: !GetAtt RoleIAM4CodeBuild.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-bcknd-cbld
+      Artifacts:
+        Type: CODEPIPELINE #TODO: maybe NO_ARTIFACTS? ECR will contain the image, code deploy gets from there, or from here?
+      ConcurrentBuildLimit: 1
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:8.0 #UBUNTU
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: ECR_URI
+            Value: !GetAtt ECR.RepositoryUri
+            Type: PLAINTEXT
+      LogsConfig: 
+        CloudWatchLogs:
+          Status: ENABLED
+      Source: 
+        GitCloneDepth: 1
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 10
+
+#----------------------------------------------------------------------
+#Output information for user after stack creation
+#----------------------------------------------------------------------
+Outputs:
+  EnvironmentName:
+    Description: Environment Name
+    Value: !Ref EnvironmentName
+
+  S3Bucket4PipelineArtifacts:
+    Description: S3 Artifacts Bucket
+    Value: S3Bucket4PipelineArtifacts

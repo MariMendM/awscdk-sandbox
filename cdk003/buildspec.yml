@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo ... INSTALL started at `date`
+      - apt-get update -y
+
+  pre_build:
+    commands:
+      - echo ... PRE BUILD phase at `date` for rest api building
+
+      #Installing c++ rest api dependencies for building it
+      - chmod +x ./rest-api/dependencies/install_dependencies_build.sh
+      - ./rest-api/dependencies/install_dependencies_build.sh
+
+      #Compiling c++ rest api
+      - cd rest-api/
+      - make
+      - cd ..
+
+  build:
+    commands:
+      - echo ... BUILD started at `date` for dcoker image building
+
+      #Creating docker image and pushing it to ECR
+      - docker build -t restapi-img .
+      - docker images
+
+  post_build:
+    commands:
+      - echo ... POST BUILD started at `date` for pushing docker image to ECR
+
+      #Logging into ECR and pushing built image
+      - echo ECR_URI ${ECR_URI}
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ECR_URI}
+      - docker tag restapi-img:latest ${ECR_URI}:latest
+      - docker push ${ECR_URI}:latest
+
+artifacts:
+  files:
+    - rest-api/bin/restapi.app

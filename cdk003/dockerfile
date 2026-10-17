@@ -1,0 +1,16 @@
+FROM ubuntu:latest
+
+WORKDIR /app
+
+#Copying compiled binary and the dependencies installation script
+COPY ./rest-api/bin/restapi.app ./rest-api/dependencies/install_dependencies_runtime.sh .
+RUN chmod +x ./install_dependencies_runtime.sh
+
+#Sudo dummy replacement; install_dependencies_runtime.sh is used across other projects and remove sudo from it would need evaluation
+RUN echo -e '#!/bin/bash\n$@' > /usr/bin/sudo && chmod +x /usr/bin/sudo
+
+#Installing runtime dependencies
+RUN apt-get update && ./install_dependencies_runtime.sh && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 8080
+CMD ["./restapi.app", "8080"]

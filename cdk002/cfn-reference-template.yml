@@ -1,10 +1,10 @@
 #----------------------------------------------------------------------
 Description:
   Contains
-  - 2 IAM policies (read only to S3, full access to S3)
-  - 2 IAM groups (one to each policy)
+  - 3 IAM policies (read only to S3, full access to S3, listallbuckets in S3 service)
+  - 2 IAM groups (one to attach read only + listallbuckets policies, another to attach full access + listallbuckets)
   - 1 S3 bucket (private, version enabled or not according choice)
-  - x IAM users
+  - 3 IAM users (full access with console, full access without console, read only without console)
   By default VPC deploys 1 NACL and 1 SecGroup not reachable for changes by CloudFormation
 
 #----------------------------------------------------------------------
@@ -37,7 +37,7 @@ Parameters:
   EnvironmentName:
     Description: Enter a name to be prefixed to resource names and tags (no spaces, max size 15, lowercase)
     Type: String
-    Default: studiogreat
+    Default: test
     AllowedPattern: ^((?:[0-9a-z-])+) #^\S+$
     MaxLength: 15
     ConstraintDescription: lowercase alphanumeric and hyphens, not empty, no spaces, max 15 chars
@@ -126,11 +126,11 @@ Resources:
             Action:
               - "s3:*"
 
-  IAMPolicyS3FTP: # ListAllMyBuckets access in S3 service for FTP
+  IAMPolicyS3ListAllBuckets: # ListAllMyBuckets access in S3 service required for Cyberduck S3 protocol
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub PolicyS3.ListAllBuckets
-      Description: !Sub ListAllMyBuckets for FTP listing protocols
+      Description: !Sub ListAllMyBuckets for CyberDuck S3 protocol
       Path: !Sub /${EnvironmentName}/policies/
       PolicyDocument:
         Version: 2012-10-17
@@ -140,7 +140,6 @@ Resources:
               - "*"
             Action:
               - "s3:ListAllMyBuckets"
-
   ###################################################################################
 
   # IAM Groups using policies #######################################################
@@ -148,29 +147,29 @@ Resources:
     Type: AWS::IAM::Group
     DependsOn:
       - IAMPolicyS3bucketReadOnly
-      - IAMPolicyS3FTP
+      - IAMPolicyS3ListAllBuckets
     Properties: 
       GroupName: !Sub ${S3bucket}.ReadOnly #!Join ["", [!Ref AWS::Region, !Ref S3bucket, -ReadOnly]]
       Path: !Sub /${EnvironmentName}/groups/
       ManagedPolicyArns:
         - !Ref IAMPolicyS3bucketReadOnly
-        - !Ref IAMPolicyS3FTP
+        - !Ref IAMPolicyS3ListAllBuckets
 
   IAMGroupS3FullAccess:
     Type: AWS::IAM::Group
     DependsOn:
       - IAMPolicyS3bucketFullAccess
-      - IAMPolicyS3FTP
+      - IAMPolicyS3ListAllBuckets
     Properties: 
       GroupName: !Sub ${S3bucket}.FullAccess #!Join ["", [!Ref AWS::Region, !Ref S3bucket, -FullAccess ]]
       Path: !Sub /${EnvironmentName}/groups/
       ManagedPolicyArns:
         - !Ref IAMPolicyS3bucketFullAccess
-        - !Ref IAMPolicyS3FTP
+        - !Ref IAMPolicyS3ListAllBuckets
   ###################################################################################
 
   # IAM Users attached to groups ####################################################
-  User1:
+  User1: #FullAccess in S3bucket, with console access
     Type: AWS::IAM::User
     DependsOn: IAMGroupS3FullAccess
     Properties:
@@ -179,52 +178,51 @@ Resources:
       Groups:
         - !Ref IAMGroupS3FullAccess
       LoginProfile: # console credentials
-        Password: ${EnvironmentName}-Temp123
+        Password: TempPwd123 #concatenating variables like EnvironmentName didn't work when log in!
         PasswordResetRequired: True
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/IAMUserChangePassword' #Policy to allow change of password (PasswordResetRequired True)
+        # other policies for console access can be taken care here (or via groups)
 
-  User1AccessKey: # programmatic credentials
+  User1AccessKey: # programmatic credentials (required by CyberDuck S3 protocol to create SigV4)
     Type: AWS::IAM::AccessKey
     DependsOn: User1
     Properties:
       UserName: !Select [0, !Ref UserNames] #!Join ["", [!Ref AWS::Region, fa_usr1]]
       Status: Active
   #--------------
-  User2:
+  User2: #FullAccess in S3bucket, no console access
     Type: AWS::IAM::User
-    DependsOn: IAMGroupS3ReadOnly
+    DependsOn: IAMGroupS3FullAccess
     Properties:
       UserName: !Select [1, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr2]]
       Path: !Sub /${EnvironmentName}/users/
       Groups:
-        - !Ref IAMGroupS3ReadOnly
-      LoginProfile: # console credentials
-        Password: ${EnvironmentName}-Temp123
-        PasswordResetRequired: True
+        - !Ref IAMGroupS3FullAccess
+      #LoginProfile: # no console access
 
-  User2AccessKey: # programmatic credentials
+  User2AccessKey: # programmatic credentials (required by CyberDuck S3 protocol to create SigV4)
     Type: AWS::IAM::AccessKey
     DependsOn: User2
     Properties:
       UserName: !Select [1, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr2]]
       Status: Active
   #--------------
-  User3:
+  User3: #ReadOnly in S3bucket, no console access
     Type: AWS::IAM::User
     DependsOn: IAMGroupS3ReadOnly
     Properties:
-      UserName: !Select [2, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr3]]
+      UserName: !Select [2, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr2]]
       Path: !Sub /${EnvironmentName}/users/
       Groups:
         - !Ref IAMGroupS3ReadOnly
-      LoginProfile: # console credentials
-        Password: ${EnvironmentName}-Temp123
-        PasswordResetRequired: True
+      #LoginProfile: # no console access
 
-  User3AccessKey: # programmatic credentials
+  User3AccessKey: # programmatic credentials (required by CyberDuck S3 protocol to create SigV4)
     Type: AWS::IAM::AccessKey
     DependsOn: User3
     Properties:
-      UserName: !Select [2, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr3]]
+      UserName: !Select [2, !Ref UserNames] #!Join ["", [!Ref AWS::Region, ro_usr2]]
       Status: Active
   ###################################################################################
 

@@ -5,6 +5,7 @@ phases:
     commands:
       - echo ... INSTALL started at `date`
       - apt-get update -y
+      - apt-get install zip -y
 
   pre_build:
     commands:
@@ -37,6 +38,10 @@ phases:
       - docker tag restapi-img:latest ${ECR_URI}:latest
       - docker push ${ECR_URI}:latest
 
+      #Creating imagedefinitions.json for the deployment phase
+      - echo '[{"name":"'${ECS_CONTAINER_NAME}'","imageUri":"'${ECR_URI}'"}]' > imagedefinitions.json
+      - zip imagedefinitions.zip imagedefinitions.json
+
 artifacts:
   files:
-    - rest-api/bin/restapi.app
+    - imagedefinitions.json

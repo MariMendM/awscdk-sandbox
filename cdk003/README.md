@@ -1,11 +1,19 @@
-# CDK Typescript: Creation of ECS hosting a REST API, with Development Tools for build and deploy
+# AWS: Creation of ECS hosting a REST API, with Development Tools for build and deploy
 
-Description: This CDK creates a stack deploying a CodePipeline (with Build/Deploy) to build a docker image with a C++ REST API, pushing it into ECR, and deploying it to ECS. The same stack can be created by uploading the [cfn-reference-template.yml](cfn-reference-template.yml) into CloudFormation console.
+Description: This project creates a stack deploying a CodePipeline (with Build/Deploy) to build a docker image with a C++ REST API, pushing it into ECR, and deploying it to ECS. No CDK provided for this project; the stack can be created by uploading the [cfn-reference-template.yml](cfn-reference-template.yml) into CloudFormation console.
 
-Both the CDK and the CloudFormation template provision the same set of resources, namely:
-* 1 S3 Bucket (private), with versioning enabled, for CodePipeline artifacts
-* 1 IAM Full-access Policy to the S3 Bucket
-* ...
+The CloudFormation template provision the same set of resources, namely:
+* 1 VPC;
+* 1 subnet (made public);
+* 1 route table (pub subnet);
+* 1 internet gateway (route in pub route table);
+* 1 NACLs (for pub traffic);
+* 1 security group for APP ec2 (for ECS task definition in pub subnet);
+* 1 security group for ELB of pub ecs;
+* 1 application ELBs (for pub ecs) + TargetGroups/Listeners;
+* 4 IAM roles (CodePipeline, CodeBuild, ECS Task Definition Execution, ECS Task Definition);
+* 1 S3 bucket for Code Services Artifacts
+* 1 CodePipeline for app/container (Source reading from S3 + CodeBuild);
 
 The region of deploy of stack is currently hard-coded inside bin/cdk003.ts as 'us-east-1'.
 
@@ -31,26 +39,46 @@ Final required strucuture of the file:
 The name of the file has to be the same value input in the Stack variable 'Filename of zipped code to be uploaded to S3' (default value 'code.zip'). After the creation of the stack, the file has to be manually uploaded into to the artifacts bucket created by the stack, whose name can be acquired from the outputs of the stack.
 The pipeline automatically creates an EventBridge rule monitoring the artifacts bucket for the file (meaning it is not defined in the CFn/CDK), and this rule takes effect immediatelly upon pipeline creation; pipeline's first run will then fail due to the lack of the file. Each subsequent upload of the file in the bucket will automatically trigger the pipeline.
 
-<ins>BUILD STAGE</ins>: Accomplished by CodeBuild, this stage compiles the C++ REST API, and creates the docker image, pushing it to the ECR repo.
-
-<ins>DEPLOY STAGE</ins>: Accomplished by CodeDeploy, this stage ensures that pushed ECR images are deployed to the ECS.
+<ins>BUILD STAGE</ins>: Accomplished by CodeBuild, this stage compiles the C++ REST API, and creates the docker image, pushing it to the ECR repo. As artifacts, it produces the 'imagedefinitions.json' file according to AWS guidelines, containing the name of the container and the ECS URI of the image. This file is mandatory for the deploy stage.
 
 
-## Useful CDK commands
+## Notes and improvement opportunities
 
-In all commands, OPTION must be either PRD or DEV.
+* The artifacts bucket fro the CodePipeline/CodeBuild is created within the Stack. This means that as soon as the pipeline is created, it already runs and fails, once the bucket is empty. After stack creation, the file 'code.zip' must de uploaded to the bucket.
 
- * `cdk deploy -c envType=OPTION`      deploy this stack to default AWS account
- * `cdk diff -c envType=OPTION`        compare deployed stack with current state
- * `cdk synth -c envType=OPTION`       emits the synthesized CloudFormation template
+* The C++ REST API runs in the container binded to the Host IP, which ties it to the private IP assigned to the container. That allows the API to be accessed properly, but prevents health checks from being configured, once they can only use the localhost for calls. The solution was to create an environment variable to the container (within Task Definition configuration) pointing HOSTNAME to 0.0.0.0, which allows the application to listen from all network interfaces. It seems that ECS injects/overrides HOSTNAME with something else, so it has to be reset; this allows both application and health checks to work properly.
 
-To export CloudFormation Outputs to file, use the command:
+* ECS in configured in a public subnet (no AZ resilience, no balancer), with SG and NACL allowing ports 80, 8080 (the one that application is actually binded to) and 443 (required for pull frm ECS, for example). The NACL also allows traffic from ephemeral ports, considering that they are required fro troubleshoot of containers (installing things, for example). The ports do not reflect a secure posture, as much as they are mainly used for demo purposes.
 
- * `cdk deploy -c envType=OPTION --outputs-file ./cdk-outputs.json`
+* When configured with a 'desired count' different from zero in the CloudFormation template, the ECS Service gets stucked in "in progress" state in the Stack while the desired count is not reached. Given that a file must de uploaded to the bucket artifacts, the Pipeline must run, and an container image must be pushed to ECR before a task can successfully run in the Service, the template is configured with 'desired count' equals to zero for Stack properly creation. Then, it can be manually adjusted in the console for the service when everything is up and running.
+
+
+## ECS Exec for troubleshooting ECS containers
+
+In order to run ECS Exec (docker exec -it container bash) in a running container:
+* the Task Definition must have proper IAM permissions (configured in template's resource 'RoleIAM4EcsTaskRole');
+* the service must enable it ('EnableExecuteCommand: true' in template's resource 'ECSService')
+* the following commands should be run in a CloudShell session (check option to "bin/bash" depending of the distro):
+
+```
+aws ecs execute-command \
+--cluster CLUSTER_NAME \
+--task TASK_ID \
+--container CONTAINER_NAME \
+--interactive \
+--command "/bin/bash"
+```
+
+Some commands that may help with troubleshooting configurations:
+
+```
+aws ecs describe-tasks --cluster CLUSTER_NAME --tasks TASK_ID
+```
 
 ## Testing
 
-Create the stack, upload the 'code.zip' file prepared according to the instructions laid before in this document, and test the REST API:
+* Create the stack, upload the 'code.zip' file prepared according to the instructions laid before in this document, and run the pipeline ("Release Change");
+* Once the base image is pushed to ECR, change the 'desired count' of ECS Service to 1 (at least!);
+* Once the task triggered by the service is in 'running' state, access the API through curl -v http://<TASK-PUBLIC-IP>:8080/api (more test options in the [API documentation](https://github.com/MariMendM/cpp-sandbox/tree/main/rest-api).
 
-- open...
-- curl...
+Note: the API is just a shell, implementing nothing more than /api (which is used for health check), and /api/resource-a (printing a simple message). Other methods and resources return success, but with a mere message of "not implemented". The API is not the main reason of this project, it is just a bare minimum to test AWS services connected!

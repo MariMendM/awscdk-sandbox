@@ -1,4 +1,20 @@
 #----------------------------------------------------------------------
+Description:
+ Contains
+ - 1 VPC;
+ - 1 subnet (made public);
+ - 1 route table (pub subnet);
+ - 1 internet gateway (route in pub route table);
+ - 1 NACLs (for pub traffic);
+ - 1 security group for APP ec2 (for ECS task definition in pub subnet);
+ - 1 security group for ELB of pub ecs;
+ - 1 application ELBs (for pub ecs) + TargetGroups/Listeners;
+ - 4 IAM roles (CodePipeline, CodeBuild, ECS Task Definition Execution, ECS Task Definition);
+ - 1 S3 bucket for Code Services Artifacts
+ - 1 CodePipeline for app/container (CodeBuild);
+ By default VPC deploys 1 NACL and 1 SecGroup not reachable for changes by CloudFormation
+
+#----------------------------------------------------------------------
 #Metadata to define presentation of input parameters (AWS console interface)
 #----------------------------------------------------------------------
 Metadata:
@@ -10,14 +26,29 @@ Metadata:
         Parameters:
           - EnvironmentName
       - Label:
-          default: "Source Code Configuration"
+          default: "Source Code and Container Configuration"
         Parameters:
           - SourceCodeS3Key
+          - ContainerName
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCIDR
+          - PublicSubnet1CIDR
+          - Ip4ServerConnection
     ParameterLabels:
       EnvironmentName:
         default: Environment Name
       SourceCodeS3Key:
         default: Filename of zipped code to be uploaded to S3
+      ContainerName:
+        default: Container name
+      VpcCIDR: 
+        default: VPC IP range
+      PublicSubnet1CIDR:
+        default: First Public Subnet VPC IP range
+      Ip4ServerConnection:
+        default: IP address (or range) for connection to public servers
 
 #----------------------------------------------------------------------
 #Input parameters (information from user)
@@ -33,27 +64,488 @@ Parameters:
     ConstraintDescription: lowercase alphanumeric and hyphens, not empty, no spaces, max 15 chars
 
   SourceCodeS3Key:
-    Description:  Type the name of the zip file containing the code to be uploaded to S3
+    Description:  Enter the name of the zip file containing the source code to be manually uploaded to S3
     Type: String
     Default: code.zip
     AllowedPattern: ^\S+$
     ConstraintDescription: cannot have spaces neither be empty
+
+  ContainerName:
+    Description:  Enter the container name
+    Type: String
+    Default: restapi
+    AllowedPattern: ^\S+$
+    ConstraintDescription: cannot have spaces neither be empty
+
+  VpcCIDR:
+    Description: Enter the IP range (CIDR notation) for VPC
+    Type: String
+    Default: 10.10.0.0/16
+    AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){1}$
+    ConstraintDescription: must be a valid CIDR range
+
+  PublicSubnet1CIDR:
+    Description: Enter the IP range (CIDR notation) for the first public subnet
+    Type: String
+    Default: 10.10.10.0/24
+    AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){1}$
+    ConstraintDescription: must be a valid CIDR range
+
+  Ip4ServerConnection:
+    Description: Enter the IP address (or CIDR range) for connections SSH/RDP/ICMP to public servers
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){0,1}$
+    ConstraintDescription: must be an IP or CIDR range
 
 #----------------------------------------------------------------------
 #Resources definition
 #----------------------------------------------------------------------
 Resources:
 
-  # ECR/ECS ##########################################################################
+  # VPC #############################################################################
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-vpc
 
+  # Public and Private Subnets ------------------------------------------------------
+  SubnetPub1:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]   #Selects 1st AZ of current zone
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-subnet-pub1
+
+  # Internet Gateway ----------------------------------------------------------------
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-igw
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn:
+      - VPC
+      - InternetGateway
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Public Route Table --------------------------------------------------------------
+  RouteTablePub:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rtb-pub
+    
+  RouteTablePubRouteA: #Internet traffic using Internet Gateway
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTablePub
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  RouteTablePubAssociation2SubnetPub1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - RouteTablePub
+      - SubnetPub1
+    Properties:
+      RouteTableId: !Ref RouteTablePub
+      SubnetId: !Ref SubnetPub1
+
+  # Public Network ACL --------------------------------------------------------------
+  NetworkACLPub:
+    Type: AWS::EC2::NetworkAcl
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-nacl-pub
+
+  NetworkACLPubInboundHTTP: #Allow external requests to internal webservers
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: false
+       RuleNumber: 100
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 80
+         To: 80
+
+  NetworkACLPubInboundCustomHTTP: #Allow external requests to internal webservers
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: true
+       RuleNumber: 110
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 8080
+         To: 8080
+
+  NetworkACLPubInboundHTTPS: #Allow requests from servers to external webservers; pull from ECR
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: true
+       RuleNumber: 120
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 443
+         To: 443
+
+  NetworkACLPubInboundEphemeral: #Allow external responses to requests from servers; install (apt-get); maintenance
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: false
+       RuleNumber: 130
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 1024
+         To: 65535
+
+  NetworkACLPubOutboundHTTP: #Allow requests from servers to external webservers; install (apt-get); maintenance
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: true
+       RuleNumber: 100
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 80
+         To: 80
+
+  NetworkACLPubOutboundCustomHTTP: #Allow requests from servers to external webservers; install (apt-get); maintenance
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: true
+       RuleNumber: 110
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 8080
+         To: 8080
+
+  NetworkACLPubOutboundHTTPS: #Allow requests from servers to external webservers; pull from ECR
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: true
+       RuleNumber: 120
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 443
+         To: 443
+
+  NetworkACLPubOutboundEphemeral: #Allow server responses to external requests from clients
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Properties:
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: true
+       RuleNumber: 130
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 1024
+         To: 65535
+
+  NetworkACLPubAssociation2SubnetPub1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    DependsOn:
+      - NetworkACLPub
+      - SubnetPub1
+    Properties: 
+      NetworkAclId: !Ref NetworkACLPub
+      SubnetId: !Ref SubnetPub1
+
+  # Security Group 4 app public ECS ---------------------------------------------
+  SecGroup4PubECS:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-app-public-ecs-sg
+      GroupDescription: "Security group for public ecs"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-sg-pubecs-app
+
+  SecGroup4PubECSInboundHTTP: #Allow external requests to internal webservers
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: SecGroup4PubECS
+    Properties:
+      GroupId: !Ref SecGroup4PubECS
+      Description: "Inbound for HTTP 80"
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+
+  SecGroup4PubECSInboundCustomHTTP: #Allow external requests to internal webservers
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: SecGroup4PubECS
+    Properties:
+      GroupId: !Ref SecGroup4PubECS
+      Description: "Inbound for HTTP 8080"
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      CidrIp: 0.0.0.0/0
+
+  SecGroup4PubECSInboundHTTPS: #Allow external requests to internal webservers; pull from ECR
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: SecGroup4PubECS
+    Properties:
+      GroupId: !Ref SecGroup4PubECS
+      Description: "Inbound for HTTPS 443"
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+
+  # Security Group 4 ECS ELB ----------------------------------------------------
+  SecGroup4EcsELB:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-elb-ecs-sg
+      GroupDescription: "Security group for ECS load balancer"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-sg-ecs-ldblncr
+
+  SecGroup4EcsELBInbound8080: #For listener 8080
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: SecGroup4EcsELB
+    Properties:
+      GroupId: !Ref SecGroup4EcsELB
+      Description: "Inbound for HTTP"
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      CidrIp: 0.0.0.0/0
+
+  # Load Balancer ###################################################################
+
+
+  # ECR/ECS ##########################################################################
   # ECR private repo ----------------------------------------------------------------
   ECR:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${EnvironmentName}/restapi #Comment for auto-generated name
+      RepositoryName: !Sub ${EnvironmentName}/${ContainerName}
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-ecr
+
+  # ECS cluster ----------------------------------------------------------------------
+  ECScluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-cluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-cluster
+
+  # ECS Task Definition with roles ---------------------------------------------------
+  RoleIAM4EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: !Sub ECS Task Execution role for ${EnvironmentName}
+      RoleName: !Sub ${EnvironmentName}-ecs-taskexecution-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2008-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: "ecsCreateLogGroupPermission" #allows creation of CloudWatch log group (awslogs-create-group in ECSTaskDefinition)
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              #Resource has to be exactly the same name of awslogs-group in ECSTaskDefinition
+              - Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${EnvironmentName}-taskdefinition:*
+                Action:
+                  - "logs:CreateLogGroup"
+                Effect: "Allow"
+
+  RoleIAM4EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: !Sub ECS Task role for ${EnvironmentName}
+      RoleName: !Sub ${EnvironmentName}-ecs-task-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2008-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+            # Condition:
+              # StringEquals: !Sub aws:SourceAccount: ${AWS::AccountId}
+              # ArnLike: !Sub aws:SourceArn: arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+        - PolicyName: "ecsExecPermissions" #allows to use ECS Exec in containers that are running (aws ecs execute-command, useful for debugging)
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Action:
+                  - "ssmmessages:CreateControlChannel"
+                  - "ssmmessages:CreateDataChannel"
+                  - "ssmmessages:OpenControlChannel"
+                  - "ssmmessages:OpenDataChannel"
+                Effect: Allow
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - ECR
+      - RoleIAM4EcsTaskExecutionRole
+      - RoleIAM4EcsTaskRole
+    Properties:
+      Family: !Sub ${EnvironmentName}-taskdefinition #name
+      #Launch type -------------------------
+      RequiresCompatibilities: 
+        - FARGATE
+      #OS, Architecture, Network mode ------
+      RuntimePlatform: 
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      NetworkMode: awsvpc
+      #Task size ----------------------------
+      Memory: 1024 #1GB
+      Cpu: 512 #0.5 CPU
+      #Task roles ---------------------------
+      TaskRoleArn: !GetAtt RoleIAM4EcsTaskRole.Arn
+      ExecutionRoleArn:  !GetAtt RoleIAM4EcsTaskExecutionRole.Arn
+      #Containers ---------------------------
+      ContainerDefinitions:
+        #container 1, with the rest api, the only one in this project
+        - Name: !Ref ContainerName
+          Essential: true
+          Image: !Sub ${ECR.RepositoryUri}:latest
+          PortMappings:
+            - Name: "port8080"
+              ContainerPort: 8080
+              Protocol: tcp
+              AppProtocol: http
+            - Name: "port80"
+              ContainerPort: 80
+              Protocol: tcp
+              AppProtocol: http
+          Environment:
+            #Env variables
+            - Name: HOSTNAME  #ECS injects/overrides HOSTNAME with something else, so it has to be reset; otherwise healthchecks do not work
+              Value: 0.0.0.0
+          HealthCheck:
+              Command:
+                - CMD-SHELL #run the command with the container's default shell
+                - curl -v http://127.0.0.1:8080/api || exit 1 #success expected from GET /api (it must be localhost)
+              StartPeriod: 45 #grace period to allow containers to bootstrap before start health checks
+              Interval: 30 #seconds between each health check execution
+              Timeout: 5 #seconds to wait for a health check to succeed before it is considered a failure
+              Retries: 3 #number of retries to a failed check before the container is considered unhealthy
+          ReadonlyRootFilesystem: false #if true, doesn't support ECS Exec
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-taskdefinition #exactly the same name in RoleIAM4EcsTaskExecutionRole
+              awslogs-create-group: true
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: ecs
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-taskdefinition
+
+  # ECS Service ----------------------------------------------------------------------
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ECScluster
+      - ECSTaskDefinition
+      - SubnetPub1
+      - SecGroup4PubECS
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-service
+      TaskDefinition: !Sub ${EnvironmentName}-taskdefinition #CFn for Task definition doesn't return family, use the same value in both
+      Cluster: !GetAtt ECScluster.Arn
+      #Compute ------------------------
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      #Troubleshooting (ECS Exec) -----
+      EnableExecuteCommand: true
+      #Deployment ------------------------
+      DesiredCount: 0 #Stack doesn't complete until qty of tasks are running; container image is not available for a while, so change to 1 manually after pipeline 
+      #Network ------------------------
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+            AssignPublicIp: ENABLED
+            SecurityGroups: 
+              - !Ref SecGroup4PubECS
+            Subnets:
+              - !Ref SubnetPub1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-service
 
   # CI/CD Pipeline ##################################################################
 
@@ -254,6 +746,9 @@ Resources:
           - Name: ECR_URI
             Value: !GetAtt ECR.RepositoryUri
             Type: PLAINTEXT
+          - Name: ECS_CONTAINER_NAME
+            Value: !Ref ContainerName
+            Type: PLAINTEXT
       LogsConfig: 
         CloudWatchLogs:
           Status: ENABLED
@@ -272,4 +767,8 @@ Outputs:
 
   S3Bucket4PipelineArtifacts:
     Description: S3 Artifacts Bucket
-    Value: S3Bucket4PipelineArtifacts
+    Value: !Ref S3Bucket4PipelineArtifacts
+
+  ECR:
+    Description: ECR repo
+    Value: !Ref ECR

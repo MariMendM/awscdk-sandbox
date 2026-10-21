@@ -1,6 +1,6 @@
-# AWS CDK Sandbox Projects
+# AWS Sandbox Projects
 
-Sandbox for demos of AWS CDK, but most of the projects will also have the respective manually created CloudFormation included, for reference and for testing AWS services without the need of CDK.  
+This repo started as a sandbox for demos of AWS CDK, but it turn out to be simply a sandbox for AWS services and integrations. All projects will have a CloudFormation template to deploy the proposed stacks, but only some will also have the respective CDK included (the ones that have a "Constructs" description).
 
 <!--How to use badges?
 
@@ -21,9 +21,9 @@ The static badge accepts a single required path parameter which encodes either:
 
 <details><summary>Diagram (pending)</summary><img src="cdk001/documents/diagram.png"></details>
 
-**Services:** VPC (Subnet...) :black_small_square: ...
+**Services:** VPC (Subnets, Route Tables, NACLs, Internet Gateway)
 
-**Constructs:** CfnVPC :black_small_square: CfnSubnets :black_small_square: ...
+**Constructs:** @aws-cdk/core :black_small_square: @aws-cdk/aws-ec2
 
 ---
 
@@ -34,7 +34,7 @@ The static badge accepts a single required path parameter which encodes either:
 
 **Services:** S3 :black_small_square: IAM (ManagedPolicy, PolicyStatement, Group, User, AccessKey)
 
-**Constructs:** @aws-cdk/aws-s3 (Bucket) :black_small_square: @aws-cdk/aws-iam (ManagedPolicy, PolicyStatement, Group, User, CfnAccessKey) :black_small_square: @aws-cdk/core (CfnOutput)
+**Constructs:** @aws-cdk/core (CfnOutput) :black_small_square: @aws-cdk/aws-s3 (Bucket) :black_small_square: @aws-cdk/aws-iam (ManagedPolicy, PolicyStatement, Group, User, CfnAccessKey)
 
 ---
 
@@ -43,6 +43,6 @@ The static badge accepts a single required path parameter which encodes either:
 
 **Purpose:** Create a stack deploying a CodePipeline to build a docker image with a C++ REST API and push it into ECR, deploying it to ECS. (documentation [here](cdk003/README.md)).
 
-**Services:** CodePipeline / CodeBuild / CodeDeploy :black_small_square: S3 :black_small_square: ECR :black_small_square: IAM (Role)
+<details><summary>Diagram (pending)</summary><img src="cdk003/documents/diagram.png"></details>
 
-**Constructs:** ...
+**Services:** CodePipeline (Code source from S3 + CodeBuild + Deploy arget to ECS) :black_small_square: S3 (Bucket, PolicyBucket) :black_small_square: ECR :black_small_square: ECS (Cluster, Service, Task Definition) :black_small_square: EventBridge (Rule) :black_small_square: CloudTrail (Trail) :black_small_square: VPC (Subnets, Route Tables, NACLs, SGs, Internet Gateway) :black_small_square: IAM (Roles, Policies) :black_small_square: Docker (dockerfile)

@@ -20,7 +20,7 @@
 
 The main purpose of this demo is to have a CloudFormation Stack deploying a CodePipeline to get code files from a S3 Bucket, build a docker image with a C++ REST API, push the image into ECR, and deploy it to ECS to spin new containers (tasks) based on the newly created image.
 
-> <details><summary>Expand for CodePipeline Diagram</summary><img src="codepipeline-diagram.png"></details>
+> <details><summary>Expand for CodePipeline Diagram</summary><img src="documents/codepipeline-diagram.png"></details>
 
 The C++ REST API is located at the folder 'rest-api' in [MariMendM/cpp-sandbox](https://github.com/MariMendM/cpp-sandbox). It is just a shell, implementing nothing more than /api (which is used for health check), and /api/resource-a (printing a simple message). Other methods and resources return success, but with a mere message of "not implemented". The API is not the main reason of this project, it is just a bare minimum to demo AWS services connected to make it work.
 
@@ -222,7 +222,7 @@ For the SGs:
   * the tasks will run over the new Task Definition Revision created by the Deploy Stage of the pipeline
   * the tasks will very soon enter 'running' state with a 'healthy' status;
 * Reach for the Application Load Balancer, and copy its DNS name
-  * access the API through curl (more test options in the [API documentation](https://github.com/MariMendM/cpp-sandbox/tree/main/rest-api)
+  * access the API through curl (more test options in the [API documentation](https://github.com/MariMendM/cpp-sandbox/tree/main/rest-api))
    ```
    curl -v http://<ELB-DNS-NAME>:8080/api
    ```

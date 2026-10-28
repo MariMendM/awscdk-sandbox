@@ -1,24 +1,22 @@
 #----------------------------------------------------------------------
 Description:
-Contains
+ Contains
  1 VPC;
- 1 subnet (public);
- 1 route table (pub subnet);
+ 4 subnets (2 public, 2 private);
+ 3 route tables (1 for pub, 1 per each pvt subnets);
  1 internet gateway (route in pub route table);
- 1 NACLs (pub traffic);
- 1 security group for ECS Task Definition (in pub subnet);
- 1 security group for ELB of pub ecs;
- 1 application ELBs (for pub ecs) + TargetGroups/Listeners;
- 1 ECS Cluster;
- 1 ECS Service;
- 1 ECS Task Definition;
+ 2 NAT gateways (routes in pvt route tables);
+ 2 NACLs (1 for pub, 1 for pvt subnets);
+ 2 security groups (ECS Task Definition, ELB ECS Service);
+ 1 application ELB + TargetGroups/Listeners;
+ 1 ECS Cluster + Service/Task Definition;
  2 S3 buckets (Code Services Artifacts, CloudTrail logs)
  1 S3 bucket policy (for bucket CloudTrail logs)
  1 EventBridge Rule for Code Services to monitor bucket artifacts for new version of source code
  1 CloudTrail enabling object-level data logging events for the S3 artifact bucket, allowing EventBridge to capture them
- 1 CodePipeline for app/container (source from S3 + CodeBuild + target to ECS);
+ 1 CodePipeline for app/container (source reading from S3 + CodeBuild + deploy target to ECS);
  5 IAM roles (CodePipeline, CodeBuild, ECS Task Definition Execution, ECS Task Definition, EventBridge Target);
-By default VPC deploys 1 NACL and 1 SecGroup not reachable for changes by CloudFormation
+ By default VPC deploys 1 NACL and 1 SecGroup not reachable for changes by CloudFormation
 
 #----------------------------------------------------------------------
 #Metadata to define presentation of input parameters (AWS console interface)
@@ -31,6 +29,7 @@ Metadata:
           default: "General Configuration"
         Parameters:
           - EnvironmentName
+          - EnvType
       - Label:
           default: "Source Code and Container Configuration"
         Parameters:
@@ -41,10 +40,15 @@ Metadata:
         Parameters:
           - VpcCIDR
           - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
           - Ip4ServerConnection
     ParameterLabels:
       EnvironmentName:
         default: Environment Name
+      EnvType:
+        default: Environment Type
       SourceCodeS3Key:
         default: Filename of zipped code to be uploaded to S3
       ContainerName:
@@ -53,6 +57,12 @@ Metadata:
         default: VPC IP range
       PublicSubnet1CIDR:
         default: First Public Subnet VPC IP range
+      PublicSubnet2CIDR:
+        default: Second Public Subnet VPC IP range
+      PrivateSubnet1CIDR:
+        default: First Private Subnet VPC IP range
+      PrivateSubnet2CIDR:
+        default: Second Private Subnet VPC IP range
       Ip4ServerConnection:
         default: IP address (or range) for connection to public servers
 
@@ -68,6 +78,15 @@ Parameters:
     AllowedPattern: ^((?:[0-9a-z-])+) #^\S+$
     MaxLength: 15
     ConstraintDescription: lowercase alphanumeric and hyphens, not empty, no spaces, max 15 chars
+
+  EnvType: 
+    Description: Choose environment type (used to turn on/off some in/outbound rules of NACLs/SecGroups)
+    Type: String
+    AllowedValues:
+      - Production
+      - Maintenance
+    Default: Maintenance
+    ConstraintDescription: must specify one of the options
 
   SourceCodeS3Key:
     Description:  Enter the name of the zip file containing the source code to be manually uploaded to S3
@@ -97,12 +116,40 @@ Parameters:
     AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){1}$
     ConstraintDescription: must be a valid CIDR range
 
+  PublicSubnet2CIDR:
+    Description: Enter the IP range (CIDR notation) for the second public subnet
+    Type: String
+    Default: 10.10.11.0/24
+    AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){1}$
+    ConstraintDescription: must be a valid CIDR range
+
+  PrivateSubnet1CIDR:
+    Description: Enter the IP range (CIDR notation) for the first private subnet
+    Type: String
+    Default: 10.10.20.0/24
+    AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){1}$
+    ConstraintDescription: must be a valid CIDR range
+
+  PrivateSubnet2CIDR:
+    Description: Enter the IP range (CIDR notation) for the second private subnet
+    Type: String
+    Default: 10.10.21.0/24
+    AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){1}$
+    ConstraintDescription: must be a valid CIDR range
+
   Ip4ServerConnection:
     Description: Enter the IP address (or CIDR range) for connections SSH/RDP/ICMP to public servers
     Type: String
     Default: 0.0.0.0/0
     AllowedPattern: ^((?:[0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2}){0,1}$
     ConstraintDescription: must be an IP or CIDR range
+
+#----------------------------------------------------------------------
+#Conditions for resource configuration
+#----------------------------------------------------------------------
+Conditions:
+
+  IsEnvMaintenance: !Equals [ !Ref EnvType, Maintenance ] #Used to turn on/off some in/outbound rules of NACLs/SecGroups (via update stack)
 
 #----------------------------------------------------------------------
 #Resources definition
@@ -134,6 +181,42 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-subnet-pub1
 
+  SubnetPub2:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC    
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]   #Selects 2nd AZ of current zone
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-subnet-pub2
+
+  SubnetPvt1:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC    
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]   #Selects 1st AZ of current zone
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-subnet-pvt1
+
+  SubnetPvt2:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC    
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]   #Selects 2nd AZ of current zone
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-subnet-pvt2
+
   # Internet Gateway ----------------------------------------------------------------
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -150,6 +233,49 @@ Resources:
     Properties:
       InternetGatewayId: !Ref InternetGateway
       VpcId: !Ref VPC
+
+  # NAT Gateways --------------------------------------------------------------------
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-eip-nat1
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    DependsOn:
+      - NatGateway1EIP
+      - SubnetPub1
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref SubnetPub1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-nat1
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-eip-nat2
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    DependsOn:
+      - NatGateway2EIP
+      - SubnetPub2
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref SubnetPub2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-nat2
 
   # Public Route Table --------------------------------------------------------------
   RouteTablePub:
@@ -178,7 +304,74 @@ Resources:
       RouteTableId: !Ref RouteTablePub
       SubnetId: !Ref SubnetPub1
 
+  RouteTablePubAssociation2SubnetPub2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - RouteTablePub
+      - SubnetPub2
+    Properties:
+      RouteTableId: !Ref RouteTablePub
+      SubnetId: !Ref SubnetPub2
+
+  # Private Route Tables ------------------------------------------------------------
+  RouteTablePvt1:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rtb-pvt1
+
+  RouteTablePvt1RouteA: #Internet traffic through NAT Gateway 1
+    Type: AWS::EC2::Route
+    DependsOn:
+      - RouteTablePvt1
+      - NatGateway1
+    Properties:
+      RouteTableId: !Ref RouteTablePvt1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  RouteTablePvt1Association2SubnetPvt1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - RouteTablePvt1
+      - SubnetPvt1
+    Properties:
+      RouteTableId: !Ref RouteTablePvt1
+      SubnetId: !Ref SubnetPvt1
+
+  RouteTablePvt2:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rtb-pvt2
+
+  RouteTablePvt2RouteA: #Internet traffic through NAT Gateway 2
+    Type: AWS::EC2::Route
+    DependsOn:
+      - RouteTablePvt2
+      - NatGateway2
+    Properties:
+      RouteTableId: !Ref RouteTablePvt2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  RouteTablePvt2Association2SubnetPvt2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - RouteTablePvt2
+      - SubnetPvt2
+    Properties:
+      RouteTableId: !Ref RouteTablePvt2
+      SubnetId: !Ref SubnetPvt2
+
   # Public Network ACL --------------------------------------------------------------
+  # See README for understanding choices creating inbound/outbound rules
   NetworkACLPub:
     Type: AWS::EC2::NetworkAcl
     DependsOn: VPC
@@ -188,9 +381,10 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-nacl-pub
 
-  NetworkACLPubInboundHTTP: #Allow external requests to internal webservers
+  NetworkACLPubInboundHTTP: #only when EnvType is Maintenance
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
+    Condition: IsEnvMaintenance
     Properties:
        NetworkAclId: !Ref NetworkACLPub
        Egress: false
@@ -202,21 +396,7 @@ Resources:
          From: 80
          To: 80
 
-  NetworkACLPubInboundCustomHTTP: #Allow external requests to internal webservers
-    Type: AWS::EC2::NetworkAclEntry
-    DependsOn: NetworkACLPub
-    Properties:
-       NetworkAclId: !Ref NetworkACLPub
-       Egress: false
-       RuleNumber: 110
-       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
-       RuleAction: allow
-       CidrBlock: 0.0.0.0/0
-       PortRange:
-         From: 8080
-         To: 8080
-
-  NetworkACLPubInboundHTTPS: #Allow requests from servers to external webservers; pull from ECR
+  NetworkACLPubInboundHTTPS: #mandatory
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
     Properties:
@@ -230,13 +410,28 @@ Resources:
          From: 443
          To: 443
 
-  NetworkACLPubInboundEphemeral: #Allow external responses to requests from servers; install (apt-get); maintenance
+  NetworkACLPubInboundSSH: #only when EnvType is Maintenance, and for Ip4ServerConnection only
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPub
+    Condition: IsEnvMaintenance
+    Properties:    
+       NetworkAclId: !Ref NetworkACLPub
+       Egress: false
+       RuleNumber: 130
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: !Ref Ip4ServerConnection
+       PortRange:
+         From: 22
+         To: 22
+
+  NetworkACLPubInboundEphemeral: #mandatory
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
     Properties:
        NetworkAclId: !Ref NetworkACLPub
        Egress: false
-       RuleNumber: 130
+       RuleNumber: 140
        Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
        RuleAction: allow
        CidrBlock: 0.0.0.0/0
@@ -244,9 +439,10 @@ Resources:
          From: 1024
          To: 65535
 
-  NetworkACLPubOutboundHTTP: #Allow requests from servers to external webservers; install (apt-get); maintenance
+  NetworkACLPubOutboundHTTP: #only when EnvType is Maintenance
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
+    Condition: IsEnvMaintenance
     Properties:
        NetworkAclId: !Ref NetworkACLPub
        Egress: true
@@ -258,7 +454,7 @@ Resources:
          From: 80
          To: 80
 
-  NetworkACLPubOutboundCustomHTTP: #Allow requests from servers to external webservers; install (apt-get); maintenance
+  NetworkACLPubOutboundCustomHTTP: #mandatory
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
     Properties:
@@ -272,7 +468,7 @@ Resources:
          From: 8080
          To: 8080
 
-  NetworkACLPubOutboundHTTPS: #Allow requests from servers to external webservers; pull from ECR
+  NetworkACLPubOutboundHTTPS: #mandatory
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
     Properties:
@@ -286,13 +482,13 @@ Resources:
          From: 443
          To: 443
 
-  NetworkACLPubOutboundEphemeral: #Allow server responses to external requests from clients
+  NetworkACLPubOutboundEphemeral: #mandatory
     Type: AWS::EC2::NetworkAclEntry
     DependsOn: NetworkACLPub
     Properties:
        NetworkAclId: !Ref NetworkACLPub
        Egress: true
-       RuleNumber: 130
+       RuleNumber: 140
        Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
        RuleAction: allow
        CidrBlock: 0.0.0.0/0
@@ -309,73 +505,152 @@ Resources:
       NetworkAclId: !Ref NetworkACLPub
       SubnetId: !Ref SubnetPub1
 
-  # Security Group 4 app public ECS ---------------------------------------------
-  SecGroup4PubECS:
-    Type: AWS::EC2::SecurityGroup
+  NetworkACLPubAssociation2SubnetPub2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    DependsOn:
+      - NetworkACLPub
+      - SubnetPub2
+    Properties: 
+      NetworkAclId: !Ref NetworkACLPub
+      SubnetId: !Ref SubnetPub2
+
+  # Private Network ACL -------------------------------------------------------------
+  # See README for understanding choices creating inbound/outbound rules
+  NetworkACLPvt:
+    Type: AWS::EC2::NetworkAcl
     DependsOn: VPC
     Properties:
-      GroupName: !Sub ${EnvironmentName}-app-public-ecs-sg
-      GroupDescription: "Security group for public ecs"
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-sg-pubecs-app
+          Value: !Sub ${EnvironmentName}-nacl-pvt
 
-  SecGroup4PubECSInboundHTTP: #Allow external requests to internal webservers
-    Type: AWS::EC2::SecurityGroupIngress
-    DependsOn: SecGroup4PubECS
+  NetworkACLPvtInboundAllInt: #mandatory
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPvt
     Properties:
-      GroupId: !Ref SecGroup4PubECS
-      Description: "Inbound for HTTP 80"
-      IpProtocol: tcp
-      FromPort: 80
-      ToPort: 80
-      CidrIp: 0.0.0.0/0
+       NetworkAclId: !Ref NetworkACLPvt
+       Egress: false
+       RuleNumber: 100
+       Protocol: -1  #IANA code or -1 for 'All'
+       RuleAction: allow
+       CidrBlock: !Ref VpcCIDR
 
-  SecGroup4PubECSInboundCustomHTTP: #Allow external requests to internal webservers
-    Type: AWS::EC2::SecurityGroupIngress
-    DependsOn: SecGroup4PubECS
+  NetworkACLPvtInboundEphemeral: #mandatory
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPvt
     Properties:
-      GroupId: !Ref SecGroup4PubECS
-      Description: "Inbound for HTTP 8080"
-      IpProtocol: tcp
-      FromPort: 8080
-      ToPort: 8080
-      CidrIp: 0.0.0.0/0
-
-  SecGroup4PubECSInboundHTTPS: #Allow external requests to internal webservers; pull from ECR
-    Type: AWS::EC2::SecurityGroupIngress
-    DependsOn: SecGroup4PubECS
+       NetworkAclId: !Ref NetworkACLPvt
+       Egress: false
+       RuleNumber: 110
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 1024
+         To: 65535
+      
+  NetworkACLPvtOutboundAllInt: #mandatory
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPvt
     Properties:
-      GroupId: !Ref SecGroup4PubECS
-      Description: "Inbound for HTTPS 443"
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: 0.0.0.0/0
+       NetworkAclId: !Ref NetworkACLPvt
+       Egress: true
+       RuleNumber: 100
+       Protocol: -1  #IANA code or -1 for 'All'
+       RuleAction: allow
+       CidrBlock: !Ref VpcCIDR
 
-  # Security Group 4 ECS ELB ----------------------------------------------------
+  NetworkACLPvtOutboundHTTP: #only when EnvType is Maintenance
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPvt
+    Condition: IsEnvMaintenance
+    Properties:
+       NetworkAclId: !Ref NetworkACLPvt
+       Egress: true
+       RuleNumber: 110
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 80
+         To: 80
+
+  NetworkACLPvtOutboundHTTPS: #mandatory
+    Type: AWS::EC2::NetworkAclEntry
+    DependsOn: NetworkACLPvt
+    Properties:
+       NetworkAclId: !Ref NetworkACLPvt
+       Egress: true
+       RuleNumber: 120
+       Protocol: 6  #IANA code or -1 for 'All' (6=TCP)
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+       PortRange:
+         From: 443
+         To: 443
+
+  NetworkACLPvtAssociation2SubnetPvt1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    DependsOn:
+      - NetworkACLPvt
+      - SubnetPvt1
+    Properties: 
+      NetworkAclId: !Ref NetworkACLPvt
+      SubnetId: !Ref SubnetPvt1
+
+  NetworkACLPvtAssociation2SubnetPvt2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    DependsOn:
+      - NetworkACLPvt
+      - SubnetPvt2
+    Properties: 
+      NetworkAclId: !Ref NetworkACLPvt
+      SubnetId: !Ref SubnetPvt2
+
+  # Security Group 4 private ECS ----------------------------------------------------
+  SecGroup4PvtECS:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-pvtecs-sg
+      GroupDescription: "Security group for private ECS"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-sg-pvtecs
+
+  SecGroup4PvtECSInboundAllInt: #Allow all internal VPC traffic
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: SecGroup4PvtECS
+    Properties:
+      GroupId: !Ref SecGroup4PvtECS
+      Description: "All VPC internal traffic"
+      IpProtocol: -1
+      CidrIp: !Ref VpcCIDR
+
+  # Security Group 4 ECS ELB --------------------------------------------------------
   SecGroup4EcsELB:
     Type: AWS::EC2::SecurityGroup
     DependsOn: VPC
     Properties:
-      GroupName: !Sub ${EnvironmentName}-elb-ecs-sg
+      GroupName: !Sub ${EnvironmentName}-pvtelb-ecs-sg
       GroupDescription: "Security group for ECS load balancer"
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-sg-ecs-ldblncr
+          Value: !Sub ${EnvironmentName}-sg-pvtelb-ecs
 
   SecGroup4EcsELBInbound8080: #For listener 8080
     Type: AWS::EC2::SecurityGroupIngress
     DependsOn: SecGroup4EcsELB
     Properties:
       GroupId: !Ref SecGroup4EcsELB
-      Description: "Inbound for HTTP"
+      Description: "All traffic for TCP 8080"
       IpProtocol: tcp
       FromPort: 8080
       ToPort: 8080
-      CidrIp: 0.0.0.0/0
+      CidrIp: !Ref VpcCIDR
   ####################################################################################
 
   # ECR/ECS ##########################################################################
@@ -497,8 +772,7 @@ Resources:
               ContainerPort: 80
               Protocol: tcp
               AppProtocol: http
-          Environment:
-            #Env variables
+          Environment: #Env variables
             - Name: HOSTNAME  #ECS injects/overrides HOSTNAME with something else, so it has to be reset; otherwise healthchecks do not work
               Value: 0.0.0.0
           HealthCheck:
@@ -527,8 +801,10 @@ Resources:
     DependsOn:
       - ECScluster
       - ECSTaskDefinition
-      - SubnetPub1
-      - SecGroup4PubECS
+      - SubnetPvt1
+      - SubnetPvt2
+      - SecGroup4PvtECS
+      - ELBListenerHTTP #prevents the service from starting before the listener is ready
     Properties:
       ServiceName: !Sub ${EnvironmentName}-service
       TaskDefinition: !Sub ${EnvironmentName}-taskdefinition #CFn for Task definition doesn't return family, use the same value in both
@@ -539,18 +815,84 @@ Resources:
       #Troubleshooting (ECS Exec) -----
       EnableExecuteCommand: true
       #Deployment ------------------------
-      DesiredCount: 0 #Stack doesn't complete until qty of tasks are running; container image is not available for a while, so change to 1 manually after pipeline 
+      DesiredCount: 0 #Stack doesn't complete until qty of tasks are running; ECR image is not available for a while, so change to 1 manually after pipeline 
       #Network ------------------------
       NetworkConfiguration:
         AwsvpcConfiguration:
-            AssignPublicIp: ENABLED
+            AssignPublicIp: DISABLED #because service is settled in SubnetPvt1/SubnetPvt2
             SecurityGroups: 
-              - !Ref SecGroup4PubECS
+              - !Ref SecGroup4PvtECS
             Subnets:
-              - !Ref SubnetPub1
+              - !Ref SubnetPvt1
+              - !Ref SubnetPvt2
+      LoadBalancers:
+        - ContainerName: !Ref ContainerName
+          ContainerPort: 8080
+          LoadBalancerName: !Ref AWS::NoValue #Name is not specified for ALBs
+          TargetGroupArn: !Ref ELBTargetGroup
+      AvailabilityZoneRebalancing: ENABLED
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-service
+  # ELB for ECS Service --------------------------------------------------------------
+  ELB: #application load balancer
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: 
+      - SecGroup4EcsELB
+      - SubnetPvt1
+      - SubnetPvt2
+    Properties: 
+      IpAddressType: ipv4
+      Name: !Sub ${EnvironmentName}-ecs-ldblncr
+      Type: application
+      Scheme: internal #private
+      SecurityGroups:
+        - !Ref SecGroup4EcsELB
+      Subnets: 
+        - !Ref SubnetPvt1
+        - !Ref SubnetPvt2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecs-ldblncr
+
+  ELBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - ELB
+      - ELBTargetGroup
+    Properties:
+      LoadBalancerArn: !Ref ELB
+      DefaultActions:
+        - Type: forward
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref ELBTargetGroup
+                Weight: 1
+      Port: 8080
+      Protocol: HTTP
+  
+  ELBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn:
+     - VPC
+    Properties: 
+      Name: !Sub ${EnvironmentName}-ldblncr-tgtgrp
+      TargetType: ip
+      VpcId: !Ref VPC
+      Port: 8080
+      Protocol: HTTP
+      ProtocolVersion: HTTP1
+      HealthCheckPath: "/api"
+      HealthCheckProtocol: HTTP
+      Matcher:
+        HttpCode: 200
+      HealthCheckIntervalSeconds: 15 #seconds between health checks
+      HealthCheckTimeoutSeconds: 5 #amount of seconds during which no response means a failed check
+      UnhealthyThresholdCount: 2 #number of consecutive checks failing before a healthy target becomes unhealthy
+      HealthyThresholdCount: 2 #number of consecutive checks succeeding before an unhealthy target becomes healthy
+      Tags: 
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ldblncr-tgtgrp
   ####################################################################################
 
   # CI/CD Pipeline ###################################################################
@@ -934,12 +1276,16 @@ Resources:
 #Output information for user after stack creation
 #----------------------------------------------------------------------
 Outputs:
+  EnvironmentType:
+    Description: Type of environment of stack
+    Value: !Ref EnvType
+
   EnvironmentName:
     Description: Environment Name
     Value: !Ref EnvironmentName
 
   S3Bucket4PipelineArtifacts:
-    Description: S3 Artifacts Bucket
+    Description: S3 Artifacts Bucket to upload source code
     Value: !Ref S3Bucket4PipelineArtifacts
 
   ECR:
@@ -948,4 +1294,8 @@ Outputs:
 
   ECScluster:
     Description: ECS cluster
-    Value: !Ref ECSCluster
+    Value: !Ref ECScluster
+
+  ELB:
+    Description: DNS of ECS ELB to call API
+    Value: !GetAtt ELB.DNSName

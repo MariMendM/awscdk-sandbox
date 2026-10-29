@@ -2,7 +2,7 @@
 
 Description: This CDK creates a basic network architetcture, based on a VPC with public/private subnets and respective Route Tables, Internet Gateway and NAT Gateway. For the subnets, NACLs are also provisioned with basic Inbound/Outbound rules.
 
-<p align="center"><img src="cdk001/documents/archict-diagram-summary.png" width="60%" height="60%"></p>
+<p align="center"><img src="documents/archict-diagram-summary.png" width="60%" height="60%"></p>
 
 ## CDK Stack
 

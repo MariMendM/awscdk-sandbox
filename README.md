@@ -15,11 +15,11 @@ The static badge accepts a single required path parameter which encodes either:
 ---
 
 ## CDK001
-[![Generic badge](https://img.shields.io/badge/Status-PendingDoc-yellow.svg)](https://shields.io/)
+[![Generic badge](https://img.shields.io/badge/Status-Finished-green.svg)](https://shields.io/)
 
 **Purpose:** Create a stack with VPC, some subnets and gateways required for proper routing (documentation [here](cdk001/README.md)).
 
-<details><summary>Diagram (pending)</summary><img src="cdk001/documents/diagram.png"></details>
+<p align="center"><img src="cdk001/documents/archict-diagram-summary.png" width="60%" height="60%"></p>
 
 **Services:** VPC (Subnets, Route Tables, NACLs, Internet Gateway)
 
@@ -43,6 +43,6 @@ The static badge accepts a single required path parameter which encodes either:
 
 **Purpose:** Create a stack deploying a CodePipeline to build a docker image with a C++ REST API and push it into ECR, deploying it to a private ECS. (documentation [here](cdk003/README.md)).
 
-<details><summary>Diagram (pending)</summary><img src="cdk003/documents/diagram.png"></details>
+<p align="center"><img src="cdk003/documents/archict-diagram-summary.png" width="60%" height="60%"></p>
 
 **Services:** CodePipeline (Code source from S3 + CodeBuild + Deploy arget to ECS) :black_small_square: S3 (Bucket, PolicyBucket) :black_small_square: ECR :black_small_square: ECS (Cluster, Service, Task Definition) :black_small_square: ELB (Application Balancer, Listener, Target Group) :black_small_square: EventBridge (Rule) :black_small_square: CloudTrail (Trail) :black_small_square: VPC (Subnets, Route Tables, NACLs, SGs, Internet Gateway, NAT Gateway) :black_small_square: IAM (Roles, Policies) :black_small_square: Docker (dockerfile)

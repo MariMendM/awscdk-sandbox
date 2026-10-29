@@ -1,6 +1,8 @@
-# CDK Typescript: creation of IAM users to access S3
+# CDK002 Typescript: creation of IAM users to access S3
 
 Description: This CDK creates a private S3 bucket and a set of IAM users configured to access it according to user policy (read-only of full-access). CyberDuck with protocol Amazon S3 is used to test the accesses. The same stack can be created by uploading the [cfn-reference-template.yml](cfn-reference-template.yml) into CloudFormation console.
+
+## CDK Stack
 
 Both the CDK and the CloudFormation template provision the same set of resources, namely:
 * 1 S3 Bucket (private), with versioning enabled according to cdk.json parameter 'enable_s3_versioning' (EnableS3Versioning variable in template)
@@ -10,6 +12,8 @@ Both the CDK and the CloudFormation template provision the same set of resources
 * 1 IAM Group with Full-access + ListAllBuckets policies attached
 * 1 IAM Group with Read-only + ListAllBuckets policies attached
 * As many users as configured in cdk.jon array parameter 'iam_users'
+
+## Parameterization of CDK
 
 The `cdk.json` file includes parametrization to deploy CDK:
 ```json

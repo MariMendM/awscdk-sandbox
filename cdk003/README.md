@@ -20,15 +20,15 @@
 
 The main purpose of this demo is to have a CloudFormation Stack deploying a CodePipeline to get code files from a S3 Bucket, build a docker image with a C++ REST API, push the image into ECR, and deploy it to ECS to spin new containers (tasks) based on the newly created image.
 
-> <details><summary>Expand for CodePipeline Diagram</summary><img src="documents/codepipeline-diagram.png"></details>
+<p align="center"><img src="documents/archict-diagram-summary.png" width="60%" height="60%"></p>
 
 The C++ REST API is located at the folder 'rest-api' in [MariMendM/cpp-sandbox](https://github.com/MariMendM/cpp-sandbox). It is just a shell, implementing nothing more than /api (which is used for health check), and /api/resource-a (printing a simple message). Other methods and resources return success, but with a mere message of "not implemented". The API is not the main reason of this project, it is just a bare minimum to demo AWS services connected to make it work.
 
-The intentional architecture is designed to have public subnet resources sending requests to privately hosted ELB/ECS, with no external internet requests reaching the ELB directly. To host the ELB/ECS Service privately, a base VPC is also created, with two private subnets (for balancing) and one public subnet, plus Internet and NAT gateways, Route Tables, NACLs and Security Groups. Within this pub/private configuration, this architetcture could be further extended adding public resources hosted in the public subnet to access the private Application Load Balancer in front of the ECS. The [Testing](#Testing) section suggests doing it by launching an EC2 Instance manually.
+The intentional architecture is designed to have public subnet resources sending requests to privately hosted ELB/ECS, with no external internet requests reaching the ELB directly. To host the ELB/ECS Service privately, a base VPC is also created, with two private and two subnets, plus Internet and NAT gateways, Route Tables, NACLs and Security Groups. Within this pub/private configuration, this architetcture could be further extended adding public resources hosted in the public subnet to access the private Application Load Balancer in front of the ECS. The [testing](#testing) section suggests doing it by launching an EC2 Instance manually.
 
-<p align="center"><img src="documents/archict-diagram.png" width="65%" height="65%"></p>
+> <details><summary>Expand for networking architetcture enclosing ECS</summary><img src="documents/archict-diagram.png"></details>
 
-> :bangbang: This demo have costs, although not significant ones if running for just a couple of hours.
+:bangbang: Atention: This demo have costs, although not significant ones if running for just a couple of hours.
 
 
 ## Repo files overview
@@ -116,6 +116,9 @@ The pipeline has an EventBridge rule monitoring the artifacts bucket for the fil
 <ins>BUILD STAGE</ins>: Accomplished by CodeBuild, this stage compiles the C++ REST API, and creates the docker image, pushing it to the ECR repo. As artifacts, it produces the 'imagedefinitions.json' file according to AWS guidelines, containing the name of the container and the ECS URI of the image. This file is mandatory for the deploy stage.
 
 <ins>DEPLOY STAGE</ins>: This stage uses ECS as Action Provider, reading the information of 'imagedefinitions.json' to get the ECR URI and push the built base image into the ECS Service/Cluster. The result is the creation of a new revision for the ECS Task Definition, with the update of the ECS Service to spin a new running task using the new revision (i.e., the built image running into a new container)
+
+> <details><summary>Expand for the CodePipeline Diagram and stages!</summary><img src="documents/codepipeline-diagram.png"></details>
+
 
 ### Creating AWS CloudFormation stack
 

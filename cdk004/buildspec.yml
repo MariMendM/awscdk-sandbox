@@ -1,0 +1,35 @@
+version: "0.2"
+
+env:
+  variables:
+    IMG_NAME: "queencatalog-img"
+
+phases:
+  pre_build:
+    commands:
+     - echo ... PRE BUILD started at `date`
+     - echo ECR_URI ${ECR_URI}
+     - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin ${ECR_URI}
+  build:
+    commands:
+     - echo ... BUILD started at `date`
+     - cd agentcore/runtime/
+     - docker build -t $IMG_NAME .
+  post_build:
+    commands:
+      - echo ... POST BUILD started at `date`
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7) #the commit hash
+      - docker tag $IMG_NAME:latest $ECR_URI:$IMAGE_TAG
+      - docker push ${ECR_URI}:${IMAGE_TAG}
+      - echo pushed ${ECR_URI}:${IMAGE_TAG}
+
+      - cd $CODEBUILD_SRC_DIR
+      - echo '{"ImageURI":"'$ECR_URI:$IMAGE_TAG'"}'
+      - echo '{"ImageURI":"'$ECR_URI:$IMAGE_TAG'"}' > imageDetail.json
+
+artifacts:
+  files:
+    #imageDetail: changes in this name (or its json structure) must be updated accordingly in cloudformation-pipeline.yml
+    - imageDetail.json
+    #cloudformation-agent: CloudFormation template file from source code that will be passed as artifact to next stage
+    - cloudformation-agent.yml

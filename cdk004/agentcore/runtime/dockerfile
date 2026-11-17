@@ -1,0 +1,37 @@
+
+#Official minimal Debian (bookworm-slim) image with Python 3.12 and uv
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /app
+
+#Configure UV to install packages directly into the container's global Python environment (skipping virtual envs) and pre-compile files to speed up application startup
+ENV UV_SYSTEM_PYTHON=1 UV_COMPILE_BYTECODE=1
+
+#Install from requirements file
+COPY requirements.txt requirements.txt
+RUN uv pip install -r requirements.txt
+
+#Install the distro for OpenTelemetry so the agent can automatically capture traces/metrics for tools like CloudWatch
+RUN uv pip install aws-opentelemetry-distro>=0.10.1
+
+# Set AWS region environment variable
+ENV AWS_REGION=us-west-1
+ENV AWS_DEFAULT_REGION=us-west-1
+
+# Signal that this is running in Docker for host binding logic
+ENV DOCKER_CONTAINER=1
+
+# Create non-root user for AgentCore Bedrock as security best practice
+RUN useradd -m -u 1000 agentcore_usr
+USER agentcore_usr
+
+# 8080: used for agent invocations (POST /invocations) and health checks (GET /ping)
+EXPOSE 8080
+# 8000: used because the container is acting as a MCP server (POST /mcp) to expose tools
+EXPOSE 8000
+
+COPY . .
+
+# Use the full module path
+# Launch Python agent code wrapped inside opentelemetry-instrument (enable telemetry tracing without requiring manual instrumentation code)
+CMD ["opentelemetry-instrument", "python", "-m", "strands_agent_queen_catalog"]

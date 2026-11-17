@@ -1,0 +1,408 @@
+#----------------------------------------------------------------------
+Description:
+ Contains
+ 1 S3 bucket (Code Services Artifacts)
+ 1 ECR repo (image for AgentCore)
+ 1 KMS key (encryption for ECR)
+ 1 CodePipeline for BedRock AgentCore (source reading from S3 + CodeBuild + deploy target to CloudFormation);
+ 3 IAM roles (CodePipeline, CodeBuild, deploy target to CloudFormation)
+
+#----------------------------------------------------------------------
+#Metadata to define presentation of input parameters (AWS console interface)
+#----------------------------------------------------------------------
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "General Configuration"
+        Parameters:
+          - EnvironmentName
+          - SourceCodeS3Key
+          - ContainerName
+          - AgentName
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment Name
+      SourceCodeS3Key:
+        default: Filename of zipped code to be uploaded to S3
+      ContainerName:
+        default: Container name
+      AgentName:
+        default: Agent name
+
+#----------------------------------------------------------------------
+#Input parameters (information from user)
+#----------------------------------------------------------------------
+Parameters:
+
+  EnvironmentName:
+    Description: Enter an environment name to be prefixed to tag 'Name' of resources (no spaces, max size 15, lowercase)
+    Type: String
+    Default: cdk004
+    AllowedPattern: ^((?:[0-9a-z])+)
+    MaxLength: 10
+    ConstraintDescription: lowercase alphanumeric, not empty, no spaces, max 10 chars
+
+  ContainerName:
+    Description: Enter the container name
+    Type: String
+    Default: queen_catalog_agent
+    AllowedPattern: ^(?=.{2,256}$)([a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(\/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*)$
+    ConstraintDescription: aws provided pattern
+
+  SourceCodeS3Key:
+    Description: Enter the name of the zip file containing the source code to be manually uploaded to S3
+    Type: String
+    Default: code.zip
+    AllowedPattern: ^\S+$
+    ConstraintDescription: cannot have spaces neither be empty
+
+  AgentName:
+    Description: Enter the agent name
+    Type: String
+    Default: queen_catalog_agent
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,36}' #reduced from 47 to 36 to consider concatenation to EnvironmentName in BedrockAgentCoreRuntime
+    ConstraintDescription: aws provided pattern
+
+#----------------------------------------------------------------------
+#Resources definition
+#----------------------------------------------------------------------
+Resources:
+
+  # ECR Repo for Bedrock Agent deployed by the pipeline ##############################
+  ECRRepositoryEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub ECR encryption key for ${EnvironmentName}
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: 2012-10-17
+        Statement:
+        - Action: kms:*
+          Effect: Allow
+          Principal:
+            AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+          Resource: "*"
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    DependsOn:
+      - ECRRepositoryEncryptionKey
+    Properties:
+      RepositoryName: !Sub ${EnvironmentName}/${ContainerName}
+      EmptyOnDelete: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt ECRRepositoryEncryptionKey.Arn
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep last 5 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'
+    DeletionPolicy: RetainExceptOnCreate
+  ####################################################################################
+
+  # CI/CD Pipeline ###################################################################
+  # Artifact storage ---------------------------------------------------------------
+  S3Bucket4PipelineArtifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      # BucketName: !Sub ${EnvironmentName}-bucket-artifacts #Comment for auto-generated name
+      VersioningConfiguration:
+        Status: Enabled #must be enabled to work as artifact for CodePipeline
+    DeletionPolicy: RetainExceptOnCreate
+
+  # CodeBuild for app/container -----------------------------------------------------
+  CodeBuildIAMRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - S3Bucket4PipelineArtifacts
+      - ECRRepository
+    Properties:
+      Description: !Sub CodeBuild role for ${EnvironmentName}
+      RoleName: !Sub ${EnvironmentName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub /${EnvironmentName}/
+      Policies:
+        - PolicyName: !Sub ${EnvironmentName}-codebuild-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource:
+                  #${EnvironmentName}-codebuild is the exact same name configured inside CodeBuild
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-codebuild 
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-codebuild:log-stream:*
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::codepipeline-${AWS::Region}-*
+                  - !Sub arn:${AWS::Partition}:s3:::${S3Bucket4PipelineArtifacts}
+                  - !Sub arn:${AWS::Partition}:s3:::${S3Bucket4PipelineArtifacts}/*
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+              - Effect: Allow
+                Resource:
+                  - "*"
+                Action:
+                  - ecr:GetAuthorizationToken
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ECRRepository}
+                Action:
+                  - imagebuilder:GetComponent
+                  - imagebuilder:GetContainerRecipe
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:PutImage
+              - Effect: Allow
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ECRRepository}
+                Action:
+                  - imagebuilder:GetComponent
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn:
+      - CodeBuildIAMRole
+    Properties: 
+      Description: !Sub CodeBuild for docker image of ${EnvironmentName}
+      Name: !Sub ${EnvironmentName}-codebuild #Exact same name configured inside CodeBuildIAMRole
+      ServiceRole: !GetAtt CodeBuildIAMRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      ConcurrentBuildLimit: 1
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux-aarch64-standard:3.0 #Required by AgentCore Runtime
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: true
+        Type: ARM_CONTAINER
+        EnvironmentVariables:
+          - Name: ECR_URI
+            Value: !GetAtt ECRRepository.RepositoryUri
+            Type: PLAINTEXT
+      Cache:
+        Modes:
+        - LOCAL_DOCKER_LAYER_CACHE
+        Type: LOCAL
+      EncryptionKey: alias/aws/s3
+      LogsConfig: 
+        CloudWatchLogs:
+          Status: ENABLED
+      Source: 
+        GitCloneDepth: 1
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 10
+
+  # Role assumed by CloudFormation during the stack deployment at Deploy Stage ------
+  CodePipelineDeployStageIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: !Sub Assumed by CloudFormation in pipeline deploy stage of ${EnvironmentName}
+      RoleName: !Sub ${EnvironmentName}-cloudformation-codepipeline-role
+      Path: !Sub /${EnvironmentName}/
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${EnvironmentName}-cloudformation-codepipeline-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:*
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:CreateServiceLinkedRole
+                Resource:
+                  - '*'
+
+  # CodePipeline for app/container --------------------------------------------------
+  CodePipelineIAMRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - S3Bucket4PipelineArtifacts
+      - CodeBuild
+    Properties:
+      Description: !Sub CodePipeline role for ${EnvironmentName}
+      RoleName: !Sub ${EnvironmentName}-codepipeline-role
+      Path: !Sub /${EnvironmentName}/
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${EnvironmentName}-codepipeline-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow #Source stage
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${S3Bucket4PipelineArtifacts}
+                  - !Sub arn:${AWS::Partition}:s3:::${S3Bucket4PipelineArtifacts}/*
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetObjectTagging
+                  - s3:GetObjectVersionTagging
+                  - s3:ListBucket
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:PutObjectTagging
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+              - Effect: Allow #Build stage
+                Resource:
+                  - !Sub arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${CodeBuild}
+                  - !Sub arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:build/${CodeBuild}:*
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+              - Effect: Allow #Deploy stage
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DeleteChangeSet
+                Resource:
+                  #${EnvironmentName}-bedrockagent-stack: exact same name configured in CodePipeline
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}-bedrockagent-stack/* 
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt CodePipelineDeployStageIAMRole.Arn
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn:
+      - CodePipelineIAMRole
+      - S3Bucket4PipelineArtifacts
+      - CodeBuild
+      - ECRRepository
+    Properties:
+      Name: !Sub ${EnvironmentName}-agentcore-pipeline
+      RoleArn: !GetAtt CodePipelineIAMRole.Arn
+      ArtifactStore: 
+        Type: S3
+        Location: !Ref S3Bucket4PipelineArtifacts
+      RestartExecutionOnUpdate: true
+      Stages:
+        - Name: SourceStage
+          Actions:
+            - Name: CodeSourceS3
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: 1
+              Configuration:
+                S3Bucket: !Ref S3Bucket4PipelineArtifacts
+                S3ObjectKey: !Sub ${SourceCodeS3Key}
+                PollForSourceChanges: true
+              OutputArtifacts:
+                - Name: SourceS3Artifacts
+        - Name: BuildStage
+          Actions:
+            - Name: BuildAgentCoreRuntimeDockerImage
+              InputArtifacts: 
+                - Name: SourceS3Artifacts 
+              ActionTypeId: 
+                Category: Build 
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuild
+              OutputArtifacts: 
+                - Name: CodeBuildArtifacts
+        - Name: DeployStage
+          Actions:
+            - Name: DeployAgentCoreRuntime
+              InputArtifacts:
+                - Name: CodeBuildArtifacts
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub ${EnvironmentName}-bedrockagent-stack #Exact same name configured in CodePipelineIAMRole
+                TemplatePath: CodeBuildArtifacts::cloudformation-agent.yml #Exact same name as provided in GIT (and buildspec)
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CodePipelineDeployStageIAMRole.Arn
+                #ParameterOverrides are defined as parameter in cloudformation-agent.yml (deployed by this DeployStage)
+                ParameterOverrides: !Sub |
+                  {
+                    "ContainerImageUri": {
+                      "Fn::GetParam": ["CodeBuildArtifacts", "imageDetail.json", "ImageURI"]
+                    },
+                    "EnvironmentName": "${EnvironmentName}",
+                    "AgentName": "${AgentName}",
+                    "ECRRepositoryEncryptionKeyArn": "${ECRRepositoryEncryptionKey.Arn}",
+                    "ECRRepositoryArn": "${ECRRepository.Arn}"
+                  }
+  ####################################################################################
+
+#----------------------------------------------------------------------
+#Output information for user after stack creation
+#----------------------------------------------------------------------
+Outputs:
+
+  S3Bucket4PipelineArtifacts:
+    Description: S3 Artifacts Bucket to upload source code
+    Value: !Ref S3Bucket4PipelineArtifacts
+
+  ECRRepository:
+    Description: ECR repository with image for the Bedrock AgentCore Runtime
+    Value: !GetAtt ECRRepository.RepositoryUri
+
+  CodePipeline:
+    Description: CodePipeline for Bedrock AgentCore Runtime deployment
+    Value: !Ref CodePipeline

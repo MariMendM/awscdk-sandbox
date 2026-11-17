@@ -19,7 +19,7 @@ See [Wiki](https://github.com/MariMendM/awscdk-sandbox/wiki) for more content an
 ## CDK001
 [![Generic badge](https://img.shields.io/badge/Status-Finished-green.svg)](https://shields.io/)
 
-**Purpose:** Create a stack with VPC, some subnets and gateways required for proper routing (documentation [here](cdk001/README.md)).
+**Purpose:** Provisions a VPC, with some subnets and gateways required for proper routing (documentation [here](cdk001/README.md)).
 
 <p align="center"><img src="cdk001/documents/archict-diagram-summary.png" width="60%" height="60%"></p>
 
@@ -32,7 +32,7 @@ See [Wiki](https://github.com/MariMendM/awscdk-sandbox/wiki) for more content an
 ## CDK002
 [![Generic badge](https://img.shields.io/badge/Status-Fixing_CDK,_CFN_ok-red.svg)](https://shields.io/)
 
-**Purpose:** Create a stack deploying a private S3 bucket and some IAM users configured to access it according to user policy chosen for each. CyberDuck can also be used, configured with protocol Amazon S3. (documentation [here](cdk002/README.md)).
+**Purpose:** Provisions a stack with a private S3 bucket and some IAM users configured to access it according to user policy chosen for each. AWS CLI or CyberDuck can be used for testing, configured with protocol Amazon S3. (documentation [here](cdk002/README.md)).
 
 **Services:** S3 :black_small_square: IAM (ManagedPolicy, PolicyStatement, Group, User, AccessKey)
 
@@ -43,8 +43,19 @@ See [Wiki](https://github.com/MariMendM/awscdk-sandbox/wiki) for more content an
 ## CDK003
 [![Generic badge](https://img.shields.io/badge/Status-Finished-green.svg)](https://shields.io/)
 
-**Purpose:** Create a stack deploying a CodePipeline to build a docker image with a C++ REST API and push it into ECR, deploying it to a private ECS. (documentation [here](cdk003/README.md)).
+**Purpose:** Provisions an AWS CodePipeline that builds a Docker image for a C++ REST API, pushes it into ECR, and deploys it to a private ECS. (documentation [here](cdk003/README.md)).
 
 <p align="center"><img src="cdk003/documents/archict-diagram-summary.png" width="60%" height="60%"></p>
 
-**Services:** CodePipeline (Code source from S3 + CodeBuild + Deploy arget to ECS) :black_small_square: S3 (Bucket, PolicyBucket) :black_small_square: ECR :black_small_square: ECS (Cluster, Service, Task Definition) :black_small_square: ELB (Application Balancer, Listener, Target Group) :black_small_square: EventBridge (Rule) :black_small_square: CloudTrail (Trail) :black_small_square: VPC (Subnets, Route Tables, NACLs, SGs, Internet Gateway, NAT Gateway) :black_small_square: IAM (Roles, Policies) :black_small_square: Docker (dockerfile)
+**Services:** CodePipeline (Code source from S3 + CodeBuild + Deploy target to ECS) :black_small_square: S3 (Bucket, PolicyBucket) :black_small_square: ECR :black_small_square: ECS (Cluster, Service, Task Definition) :black_small_square: ELB (Application Balancer, Listener, Target Group) :black_small_square: EventBridge (Rule) :black_small_square: CloudTrail (Trail) :black_small_square: VPC (Subnets, Route Tables, NACLs, SGs, Internet Gateway, NAT Gateway) :black_small_square: IAM (Roles, Policies) :black_small_square: Docker (dockerfile)
+
+---
+
+## CDK004
+[![Generic badge](https://img.shields.io/badge/Status-InWork-lavender.svg)](https://shields.io/)
+
+**Purpose:** Provisions an AWS CodePipeline that builds a Docker image for a Strands Agent, pushes it to a KMS-encrypted ECR repository, and deploys it to Amazon Bedrock AgentCore Runtime via CloudFormation (documentation [here](cdk004/README.md)). Hosted on AgentCore Runtime, the agent acts as a "Queen music historian assistant" powered by datasets and python custom tools generated with Gemini.
+
+<p align="center"><img src="cdk004/documents/architecture-diagram-summary.png" width="60%" height="60%"></p>
+
+**Services:** CodePipeline (Code source from S3 + CodeBuild + Deploy target to CloudFormation) :black_small_square: S3 (Bucket) :black_small_square: ECR :black_small_square: KMS (Key) :black_small_square: Bedrock (Runtime, Memory) :black_small_square: Sagemaker AI (Jupiter Notebook) :black_small_square: Docker (dockerfile)

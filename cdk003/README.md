@@ -1,4 +1,4 @@
-# AWS 003: Usage of ECS hosting REST API containers, with Development Tools for build and deploy
+# AWS 003: Usage of ECS hosting REST API containers, with CodePipeline for build and deploy
 
 ## Content
 
@@ -11,6 +11,7 @@
 * [Notes and improvement opportunities](#notes-and-improvement-opportunities)
 * [Testing](#testing)
   * [ECS Exec for troubleshooting ECS containers](#ecs-exec-for-troubleshooting-ecs-containers)
+* [Cleaning up](#cleaning-up)
 
 ```diff
 # Reminder: all diagrams included in documentation are Draw.io's editable layered PNGs.
@@ -28,7 +29,7 @@ The intentional architecture is designed to have public subnet resources sending
 
 > <details><summary>Expand for networking architetcture enclosing ECS</summary><img src="documents/archict-diagram.png"></details>
 
-:bangbang: Atention: This demo have costs, although not significant ones if running for just a couple of hours.
+:bangbang: Attention: This demo have costs, although not significant ones if running for just a couple of hours.
 
 
 ## Repo files overview
@@ -206,13 +207,13 @@ For the SGs:
 
 * For the VPC, the CloudFormation template was configured to avoid cross-AZ NAT traffic and extra costs, so:
   * SubnetPub1 and SubnetPvt1 are both settled in the same AZ, and SubnetPvt1 directs traffic only to the NatGateway1 associated to the SubnetPub1;
-  * the same for netwrok resources numbered 2 (SubnetPub2...).
+  * the same for network resources numbered 2 (SubnetPub2...).
 
-* ECS Service is configured in private subnets, with a Load Balancer in front of it. Security Groups and NACL from public/private subnets allowing traffic to flow from/to them have only the required CIDR/Ports when the stack input parameter 'EnvType' is defined as 'Production', option that represents what would be the intent of the architetcture, which is public resources within the VPC sending requests to the private ELB/ECS. When 'EnvType' is defined as 'Maintenance', the CIDR/Ports allowed is broader, but also analyzed only for the puproses of maintenance.
+* ECS Service is configured in private subnets, with a Load Balancer in front of it. Security Groups and NACL from public/private subnets allowing traffic to flow from/to them have only the required CIDR/Ports when the stack input parameter 'EnvType' is defined as 'Production', option that represents what would be the intent of the architecture, which is public resources within the VPC sending requests to the private ELB/ECS. When 'EnvType' is defined as 'Maintenance', the CIDR/Ports allowed is broader, but also analyzed only for the purposes of maintenance.
 
-* The ECS Service sitting in private subnets is currently pulling ECR images via NAT Gateway (private subnet -> public subnet -> NAT -> internet (ECR's enpoint) -> and back!), which means that it is not keeping the traffic internal to the AWS private network. A VPC Endpoint for ECR could be added to solve this problem, also reducing NAT Gateway data processing charges for pulls.
+* The ECS Service sitting in private subnets is currently pulling ECR images via NAT Gateway (private subnet -> public subnet -> NAT -> internet (ECR's endpoint) -> and back!), which means that it is not keeping the traffic internal to the AWS private network. A VPC Endpoint for ECR could be added to solve this problem, also reducing NAT Gateway data processing charges for pulls.
 
-* When configured with a 'desired count' different from zero in the CloudFormation template, the ECS Service gets stucked in "in progress" state in the Stack while the desired count is not reached. Given that a file must de uploaded to the bucket artifacts, the Pipeline must run, and an container image must be pushed to ECR before a task can successfully run in the Service, the template is configured with 'desired count' equals to zero for Stack properly creation. Then, it can be manually adjusted in the console for the service when everything is up and running.
+* When configured with a 'desired count' different from zero in the CloudFormation template, the ECS Service gets stuck in "in progress" state in the Stack while the desired count is not reached. Given that a file must be uploaded to the bucket artifacts, the Pipeline must run, and an container image must be pushed to ECR before a task can successfully run in the Service, the template is configured with 'desired count' equals to zero for Stack properly creation. Then, it can be manually adjusted in the console for the service when everything is up and running.
 
 
 ## Testing
@@ -233,7 +234,7 @@ For the SGs:
    ```
    curl -v http://<TASK-PRIVATE-IP>:8080/api
    ```
-  * <ins>important</ins>: the ELB and private tasks can be accessed either from inside private subnets or from connected public subnet; an EC2 instance can be launched in either of the scopes, altough an instance is more easily accessible from the public subnet via SSH or 'console connect' (this same functionality for private instances will require further configuration).
+  * <ins>important</ins>: the ELB and private tasks can be accessed either from inside private subnets or from connected public subnet; an EC2 instance can be launched in either of the scopes, although an instance is more easily accessible from the public subnet via SSH or 'console connect' (this same functionality for private instances will require further configuration).
 
 ### ECS Exec for troubleshooting ECS containers
 
@@ -264,3 +265,12 @@ Some commands that may help with troubleshooting configurations:
    ```
    aws ecs describe-tasks --cluster CLUSTER_NAME --tasks TASK_ID
    ```
+
+
+## Cleaning up
+
+* Delete all the ECR images;
+* Delete all the S3 artifacts bucket objects;
+* Delete stack created over cfn-reference-template.yml;
+* In the ECS console, for the remaining Task Defintion, de-register all revisions. 
+

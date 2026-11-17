@@ -1,4 +1,6 @@
-# CDK002 Typescript: creation of IAM users to access S3
+[![Generic badge](https://img.shields.io/badge/Status-Fixing_CDK,_CFN_ok-red.svg)](https://shields.io/)
+
+# AWS 002: CDK Typescript for the creation of IAM users to access S3
 
 Description: This CDK creates a private S3 bucket and a set of IAM users configured to access it according to user policy (read-only of full-access). CyberDuck with protocol Amazon S3 is used to test the accesses. The same stack can be created by uploading the [cfn-reference-template.yml](cfn-reference-template.yml) into CloudFormation console.
 

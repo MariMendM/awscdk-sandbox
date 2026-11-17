@@ -1,4 +1,6 @@
-# CDK001 Typescript: Network Basic Infrastructure
+[![Generic badge](https://img.shields.io/badge/Status-Finished-green.svg)](https://shields.io/)
+
+# AWS 001: CDK Typescript for networking basic infrastructure
 
 Description: This CDK creates a basic network architetcture, based on a VPC with public/private subnets and respective Route Tables, Internet Gateway and NAT Gateway. For the subnets, NACLs are also provisioned with basic Inbound/Outbound rules.
 

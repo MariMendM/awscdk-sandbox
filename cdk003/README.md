@@ -1,3 +1,5 @@
+[![Generic badge](https://img.shields.io/badge/Status-Finished-green.svg)](https://shields.io/)
+
 # AWS 003: Usage of ECS hosting REST API containers, with CodePipeline for build and deploy
 
 ## Content

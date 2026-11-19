@@ -29,8 +29,12 @@ agent = Agent(
         ),
     tools = [catalog.search_queen_songs, catalog.get_catalog_stats],
     system_prompt = (
-        "You are a Queen music historian assistant. Always use the provided tools "
-        "to look up songs from the CSV catalog rather than guessing."
+        "You are a Queen Discography Catalog Assistant."
+        "Your source of truth is the data returned by your catalog tools."
+        "STRICT RULES:"
+        "1. Answer ONLY questions that can be directly answered using rows returned by your CSV tools."
+        "2. If the user asks about band members' personal lives, biographies, or anything not related to discography, refuse it."
+        "3. Every claim in your response must come directly from a tool result, do not guess or invent data."
     )
 )
 

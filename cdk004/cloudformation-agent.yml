@@ -3,6 +3,7 @@ Description:
  Contains
  1 Bedrock AgentCore Runtime
  1 Bedrock AgentCore Memory
+ 1 Bedrock AgentCore Endpoint
  2 IAM roles (Runtime, Memory)
 
 #----------------------------------------------------------------------
@@ -35,7 +36,7 @@ Parameters:
 #----------------------------------------------------------------------
 Resources:
 
-  # Bedrock runtime/memory ###########################################################
+  # Bedrock runtime/memory/endpoint ##################################################
   BedrockAgentMemoryIAMServiceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -216,9 +217,11 @@ Resources:
               - !GetAtt BedrockAgentMemory.MemoryArn
 
   BedrockAgentCoreRuntime:
+    #Automatically creates a DEFAULT endpoint pointing to V1 upon creation, automatically updating to target the latest version when runtime is updated
     Type: AWS::BedrockAgentCore::Runtime
     DependsOn:
       - BedrockAgentCoreRuntimeIAMExecutionRole
+      - BedrockAgentMemory
     Properties:
       AgentRuntimeName: !Sub ${EnvironmentName}_${AgentName}
       Description: !Sub AgentCore Runtime for ${EnvironmentName} ${AgentName}
@@ -233,6 +236,15 @@ Resources:
         NetworkMode: PUBLIC
       ProtocolConfiguration: HTTP
       RoleArn: !GetAtt BedrockAgentCoreRuntimeIAMExecutionRole.Arn
+
+  # BedrockAgentCoreRuntimeEndpoint:
+    # Type: AWS::BedrockAgentCore::RuntimeEndpoint
+    # DependsOn:
+      # - BedrockAgentCoreRuntime
+    # Properties:
+      # Description: !Sub AgentCore Runtime Endpoint for ${EnvironmentName} ${AgentName}
+      # Name: !Sub ${EnvironmentName}_${AgentName}
+      # AgentRuntimeId: !GetAtt BedrockAgentCoreRuntime.AgentRuntimeId
   ####################################################################################
 
 #----------------------------------------------------------------------
@@ -240,18 +252,14 @@ Resources:
 #----------------------------------------------------------------------
 Outputs:
 
-  BedrockAgentCoreRuntimeId:
-    Description: Runtime ID for BedrockAgent
-    Value: !GetAtt BedrockAgentCoreRuntime.AgentRuntimeId
-
   BedrockAgentCoreRuntimeArn:
-    Description: Runtime ARN for BedrockAgent
+    Description: Runtime ARN for Bedrock AgentCore
     Value: !GetAtt BedrockAgentCoreRuntime.AgentRuntimeArn
 
-  BedrockAgentMemoryId:
-    Description: Memory ID for BedrockAgent
-    Value: !GetAtt BedrockAgentMemory.MemoryId
-
   BedrockAgentMemoryArn:
-    Description: Memory ARN for BedrockAgent'
+    Description: Memory ARN for Bedrock AgentCore
     Value: !GetAtt BedrockAgentMemory.MemoryArn
+
+  # BedrockAgentCoreRuntimeEndpoint:
+    # Description: Endpoint ARN for Bedrock AgentCore
+    # Value: !GetAtt BedrockAgentCoreRuntimeEndpoint.AgentRuntimeEndpointArn

@@ -27,7 +27,7 @@ The Strands Agent acts as a "Queen music historian assistant", built over the 'A
 
 > <details><summary>Expand for Agent diagram!</summary><img src="documents/architecture-agent-diagram.png"></details>
 
-:bangbang: Atention: This demo have costs, although not significant ones if running for just a couple of hours.
+:bangbang: Attention: This demo have costs, although not significant ones if running for just a couple of hours.
 
 
 ## Repo files overview
@@ -73,7 +73,7 @@ The Strands Agent acts as a "Queen music historian assistant", built over the 'A
   * **requirements.txt**: python dependencies
   * **strands_agent_queen_catalog.py**: Strands agent main file
   * **strands_tools_queen_catalog.py**: class QueenCatalogTools, created with Gemini, providing tools to handle the catalogue of Queen's songs.
-  * **sagemakerai-agent-playground.ipynb**: Jupiter Notebook exported from SgaeMaker AI, where code was developed/tested before be encapsulated in an BedrockAgentCoreApp for the AgentCore Runtime
+  * **sagemakerai-agent-playground.ipynb**: Jupiter Notebook exported from SageMaker AI, where code was developed/tested before be encapsulated in an BedrockAgentCoreApp for the AgentCore Runtime
 
 
 ## Preparing the environment
@@ -99,21 +99,41 @@ Create the stack by uploading the 'cloudformation-pipeline.yml' into CloudFormat
 
 ## Notes and improvement opportunities
 
-* The region configured within CloudFormation template is mostly parameterized to use the region of the deployment of the Stack, but it may be hard-coded here and there as 'us-east-1' (not deeply checked). It is definitely hard-coded within the dockerfile.
+* There is no region hard-coded within CloudFormation Pipeline and Agent templates, fully parameterized to use the region of the deployment of the Stacks. The Pipeline stack deployment region then will define the region of the whole deployment.
 
-* The artifacts bucket for the CodePipeline/CodeBuild is created within the Stack. This means that as soon as the pipeline is created, it already runs and fails, once the bucket is empty. After stack creation, the file 'code.zip' must de uploaded to the bucket. (TODO: check if this is true)
+* The artifacts bucket for the CodePipeline/CodeBuild is created within the Stack. This means that as soon as the pipeline is created, it already runs and fails, once the bucket is empty. After stack creation, the file 'code.zip' must be uploaded to the bucket.
 
-* The SourceCode Stage of the pipeline has 'PollForSourceChanges' set to true, which indicates that the artifacts bucket will be polled for uploads. This is an alternative approach to what was implemented in cdk003 (EventBridge rule over CloudTrail logs). This polling is a bit slower to react to an uploaded file, so it is expected to have a delay when compared to cdk003 strategy.
-   TODO: Pools any file?
-   TODO: How does this pool work?
+* The SourceCode Stage of the pipeline has 'PollForSourceChanges' set to true, which indicates that the artifacts bucket will be polled for uploads. This is the legacy polling mechanism, being an (not recommended!) alternative approach to what was implemented in cdk003 (EventBridge rule over CloudTrail logs). This polling works by having CodePipeline periodically check if the defined S3 Object Key has been modified (by comparing the object's ETag or last modified timestamp). Being so, it is a bit slower to react to an uploaded file, and it is expected to have a delay when compared to cdk003 strategy.
+
+* The Agent has some scope definitions in its prompt, with instructions to only respond data over the Queen's discography provided by the CSV, but no extensive testing was performed about scope creep and misbehaviour. The agent could be improved by adding Strands and/or Bedrock guardrails, but this was not included in the scope of this demo.
 
 
 ## Testing
 
-* Create a CloudFormation stack for the cloudformation-pipeline.yml;
+* Create a CloudFormation stack for the cloudformation-pipeline.yml
 * After stack gets completed, upload the 'code.zip' file (prepared according to the instructions laid before in this document) into the bucket created for the pipeline's artifacts (name of bucket in the outputs of the stack)
-  * the pipeline will start running;
-* When CodePipeline is finished...
+  * the pipeline will start running
+* When CodePipeline finishes with success:
+  * to test the agent:
+    * go to the Bedrock AgentCore Console, Agents menu, and click over the provisioned agent
+    * click 'Test Agent'
+    * chose any prompt about Queen discography (suggestions below) and click 'Run'
+    * wait for the answer
+  * to test memory:
+    * type prompts related to questions/answers already provided by the agent (a very obvious prompt would be "what are my questions so far?")
+  * to check observability:
+    * TODO!
+  NOTE: Logs and observability are turned on for the Agent. (TODO here...) 
+
+Prompt suggestions:
+ * "List all songs written by John Deacon"
+ * "Find all Hard Rock tracks from 1974 where Freddie Mercury is the singer"
+ * "What are the most predominant Queen genres?"
+ * "Show me all ballads released between 1974 and 1977"
+ * "Who wrote the most songs in the catalogue in the 80's?"
+ * "Find all songs sung by Brian May"
+ * "List all singers that are not members of the band"
+
 
 ## Cleaning up
 

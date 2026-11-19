@@ -14,7 +14,8 @@ phases:
     commands:
      - echo ... BUILD started at `date`
      - cd agentcore/runtime/
-     - docker build -t $IMG_NAME .
+     #Builds passing CodeBuild's region as target region for the dockerfile
+     - docker build --build-arg AWS_REGION=$AWS_REGION --build-arg AWS_DEFAULT_REGION=$AWS_REGION -t $IMG_NAME .
   post_build:
     commands:
       - echo ... POST BUILD started at `date`
